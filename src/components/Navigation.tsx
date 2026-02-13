@@ -1,7 +1,7 @@
 "use client"
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Sprout, Menu } from "lucide-react";
+import { Sprout, Menu, LayoutDashboard } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import Link from 'next/link';
 import { WalletButton } from './providers/solana-provider';
@@ -12,7 +12,7 @@ const Navigation = () => {
     const menuItems = [
         { label: "Features", href: "#features" },
         { label: "How It Works", href: "#how-it-works" },
-        { label: "Marketplace", href: "#marketplace" },
+        { label: "Dashboard", href: "/dashboard" },
         { label: "Documentation", href: "#docs" },
     ];
 
@@ -30,6 +30,13 @@ const Navigation = () => {
                     </Link>
 
                     <div className="hidden md:flex items-center gap-4">
+                        <Link href="/dashboard">
+                            <Button variant="outline" className="gap-2">
+                                <LayoutDashboard className="w-4 h-4" />
+                                Dashboard
+                            </Button>
+                        </Link>
+                        
                         <WalletButton />
 
                         <Link href='/create-vault'>
@@ -48,20 +55,22 @@ const Navigation = () => {
                         <SheetContent side="right" className="w-[300px] bg-card">
                             <div className="flex flex-col gap-6 mt-8">
                                 {menuItems.map((item) => (
-                                    <a
+                                    <Link
                                         key={item.label}
                                         href={item.href}
                                         onClick={() => setIsOpen(false)}
                                         className="text-lg text-muted-foreground hover:text-primary transition-colors"
                                     >
                                         {item.label}
-                                    </a>
+                                    </Link>
                                 ))}
                                 <div className="flex flex-col gap-3 mt-4">
                                     <WalletButton className='bg-red-700' />
-                                    <Button className="w-full bg-gradient-hero text-primary-foreground">
-                                        Launch App
-                                    </Button>
+                                    <Link href="/create-vault">
+                                        <Button className="w-full bg-gradient-hero text-primary-foreground">
+                                            Launch App
+                                        </Button>
+                                    </Link>
                                 </div>
                             </div>
                         </SheetContent>
