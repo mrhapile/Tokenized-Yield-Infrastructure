@@ -32,7 +32,8 @@ pub struct MintShares<'info> {
 
     #[account(
         mut,
-        constraint = payment_vault.mint == vault.payment_mint @ ErrorCode::InvalidPaymentMint
+        constraint = payment_vault.mint == vault.payment_mint @ ErrorCode::InvalidPaymentMint,
+        constraint = payment_vault.owner == vault_signer.key() @ ErrorCode::InvalidPaymentVault
     )]
     pub payment_vault: Account<'info, TokenAccount>,
 
@@ -66,34 +67,59 @@ pub struct MintShares<'info> {
 
 pub fn process_mint_shares(ctx: Context<MintShares>, amount: u64) -> Result<()> {
     let vault = &mut ctx.accounts.vault;
+    let shareholder = &mut ctx.accounts.shareholder;
+
     require!(amount > 0, ErrorCode::InvalidShareAmount);
 
+    // 1. Calculate new vault state
     let new_minted = vault
         .minted_shares
         .checked_add(amount)
         .ok_or(ErrorCode::Overflow)?;
+    
+    // Redundant safety check
     require!(
         new_minted <= vault.total_shares,
         ErrorCode::ExceedsTotalSupply
     );
 
-    // Calculate expected payment internally
-    // Enforce strict economic validation
+    // Calculate expected payment
     let expected_payment = amount
         .checked_mul(vault.price_per_share)
         .ok_or(ErrorCode::MathOverflow)?;
 
-    // payer ata account to payment-vault
-    let cpi_accounts = Transfer {
+    // 2. Calculate new shareholder state
+    if shareholder.is_initialized == false {
+        shareholder.is_initialized = true;
+        shareholder.owner = *ctx.accounts.payer.key;
+        shareholder.vault = vault.key();
+        shareholder.quantity = 0u64;
+        shareholder.debt_claimed = 0u128;
+        shareholder.bump = ctx.bumps.shareholder;
+    }
+
+    let new_quantity = shareholder.quantity
+        .checked_add(amount)
+        .ok_or(ErrorCode::Overflow)?;
+
+    // 3. Mutate State (Effects)
+    vault.minted_shares = new_minted;
+    shareholder.quantity = new_quantity;
+    shareholder.debt_claimed = 0;
+
+    // 4. Perform CPIs (Interactions)
+    
+    // Transfer payment to vault
+    let cpi_accounts_transfer = Transfer {
         from: ctx.accounts.payer_ata.to_account_info(),
         to: ctx.accounts.payment_vault.to_account_info(),
         authority: ctx.accounts.payer.to_account_info(),
     };
-    let cpi_program = ctx.accounts.token_program.to_account_info();
-    transfer(CpiContext::new(cpi_program, cpi_accounts), expected_payment)?;
+    let cpi_program_token = ctx.accounts.token_program.to_account_info();
+    transfer(CpiContext::new(cpi_program_token, cpi_accounts_transfer), expected_payment)?;
 
+    // Mint shares to user
     let vault_key = vault.key();
-    // token to payers ata
     let seeds = &[b"vault_signer".as_ref(), vault_key.as_ref(), &[vault.signer_bump]];
     let signer = &[&seeds[..]];
 
@@ -111,24 +137,5 @@ pub fn process_mint_shares(ctx: Context<MintShares>, amount: u64) -> Result<()> 
         amount,
     )?;
 
-    // update vault minted-shares
-    vault.minted_shares = new_minted;
-
-    // update/create user stake account
-    let shareholder = &mut ctx.accounts.shareholder;
-    if shareholder.is_initialized == false {
-        shareholder.is_initialized = true;
-        shareholder.owner = *ctx.accounts.payer.key;
-        shareholder.vault = vault.key();
-        shareholder.quantity = 0u64;
-        shareholder.debt_claimed = 0u128;
-        shareholder.bump = ctx.bumps.shareholder;
-    }
-
-    let new_quantity = shareholder.quantity
-        .checked_add(amount)
-        .ok_or(ErrorCode::Overflow)?;
-    shareholder.quantity = new_quantity;
-    shareholder.debt_claimed = 0;
     Ok(())
 }

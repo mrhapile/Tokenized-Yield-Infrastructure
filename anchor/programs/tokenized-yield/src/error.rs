@@ -25,4 +25,7 @@ pub enum ErrorCode {
 
     #[msg("Invalid Token Account Owner")]
     InvalidTokenAccountOwner,
+
+    #[msg("Invalid Payment Vault")]
+    InvalidPaymentVault,
 }

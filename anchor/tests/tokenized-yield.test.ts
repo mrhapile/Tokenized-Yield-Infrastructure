@@ -490,7 +490,43 @@ describe("Tokenized Yield Lifecycle", () => {
 
     // Likely MathOverflow due to price calc, or Overflow due to add. 
     // Just expect an error.
+    // Just expect an error.
     await expect(tx.rpc()).rejects.toThrow();
+  });
+
+  it("SECURITY: Unauthorized Payment Vault", async () => {
+    // Create a fake payment vault not owned by vault_signer
+    const fakePaymentVault = await createAccount(
+      provider.connection,
+      (payer as anchor.Wallet).payer,
+      paymentMint,
+      buyer.publicKey // Owned by buyer, not vault_signer
+    );
+
+    const [shareholderPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("shareholder"), vaultPda.toBuffer(), buyer.publicKey.toBuffer()],
+      program.programId
+    );
+    const investorShareAta = await anchor.utils.token.associatedAddress({
+      mint: vaultShareMintPda,
+      owner: buyer.publicKey
+    });
+
+    const tx = program.methods.mintShares(new anchor.BN(10)).accounts({
+      vault: vaultPda,
+      vaultSigner: vaultSignerPda,
+      payer: buyer.publicKey,
+      payerAta: buyerPaymentAta,
+      paymentVault: fakePaymentVault, // Malicious account
+      vaultShareMint: vaultShareMintPda,
+      shareholder: shareholderPda,
+      investorShareAta: investorShareAta,
+      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+      tokenProgram: TOKEN_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
+    }).signers([buyer]);
+
+    await expect(tx.rpc()).rejects.toThrow("InvalidPaymentVault");
   });
 
 });
