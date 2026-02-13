@@ -126,6 +126,8 @@ describe("Tokenized Yield Lifecycle", () => {
     expect(vaultAccount.performanceFeeBps).toBe(1000); // 10%
     expect(vaultAccount.treasury.toString()).toBe(treasuryPda.toString());
     expect(vaultAccount.totalFeesCollected.toNumber()).toBe(0);
+    // Governance: authority should be set to owner
+    expect(vaultAccount.authority.toString()).toBe(vaultOwnerPubKey.toString());
   });
 
   it("mints shares", async () => {
@@ -1087,4 +1089,643 @@ describe("Performance Fee Layer", () => {
       expect(vault.performanceFeeBps).toBe(2000);
     });
   });
+});
+
+// =============================================================================
+// GOVERNANCE TEST SUITE
+// =============================================================================
+describe("Governance Controls", () => {
+  const provider = anchor.AnchorProvider.env();
+  anchor.setProvider(provider);
+  const program = anchor.workspace.TokenizedYieldInfrastructure as Program<TokenizedYieldInfrastructure>;
+
+  const payer = provider.wallet;
+
+  let govVaultPda: PublicKey;
+  let govVaultSignerPda: PublicKey;
+  let govVaultShareMintPda: PublicKey;
+  let govPrincipalVaultPda: PublicKey;
+  let govRevenueVaultPda: PublicKey;
+  let govTreasuryPda: PublicKey;
+  let govPaymentMint: PublicKey;
+  let govOwner: anchor.web3.Keypair;
+  let unauthorizedUser: anchor.web3.Keypair;
+
+  beforeAll(async () => {
+    govOwner = anchor.web3.Keypair.generate();
+    unauthorizedUser = anchor.web3.Keypair.generate();
+
+    await provider.connection.confirmTransaction(
+      await provider.connection.requestAirdrop(govOwner.publicKey, 5e9)
+    );
+    await provider.connection.confirmTransaction(
+      await provider.connection.requestAirdrop(unauthorizedUser.publicKey, 2e9)
+    );
+
+    [govVaultPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("vault"), govOwner.publicKey.toBuffer()],
+      program.programId
+    );
+
+    [govVaultSignerPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("vault_signer"), govVaultPda.toBuffer()],
+      program.programId
+    );
+
+    [govVaultShareMintPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("vault_share_mint"), govVaultPda.toBuffer()],
+      program.programId
+    );
+
+    [govPrincipalVaultPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("principal-vault"), govVaultPda.toBuffer()],
+      program.programId
+    );
+
+    [govRevenueVaultPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("revenue-vault"), govVaultPda.toBuffer()],
+      program.programId
+    );
+
+    [govTreasuryPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("treasury"), govVaultPda.toBuffer()],
+      program.programId
+    );
+
+    govPaymentMint = await createMint(
+      provider.connection,
+      (payer as anchor.Wallet).payer,
+      (payer as anchor.Wallet).publicKey,
+      null,
+      6
+    );
+
+    // Initialize the governance test vault
+    await program.methods
+      .initializeVault("Governance Test Vault", new anchor.BN(1_000_000), new anchor.BN(100), 500)
+      .accounts({
+        owner: govOwner.publicKey,
+        vault: govVaultPda,
+        vaultSigner: govVaultSignerPda,
+        paymentMint: govPaymentMint,
+        principalVault: govPrincipalVaultPda,
+        revenueVault: govRevenueVaultPda,
+        treasury: govTreasuryPda,
+        vaultShareMint: govVaultShareMintPda,
+        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      })
+      .signers([govOwner])
+      .rpc();
+  });
+
+  it("GOV-1: Unauthorized fee update fails", async () => {
+    const tx = program.methods
+      .updatePerformanceFee(1500)
+      .accounts({
+        vault: govVaultPda,
+        authority: unauthorizedUser.publicKey,
+      })
+      .signers([unauthorizedUser]);
+
+    await expect(tx.rpc()).rejects.toThrow("Unauthorized");
+  });
+
+  it("GOV-2: Authorized fee update succeeds", async () => {
+    await program.methods
+      .updatePerformanceFee(1500)
+      .accounts({
+        vault: govVaultPda,
+        authority: govOwner.publicKey,
+      })
+      .signers([govOwner])
+      .rpc();
+
+    const vault = await program.account.vault.fetch(govVaultPda);
+    expect(vault.performanceFeeBps).toBe(1500);
+  });
+
+  it("GOV-3: Fee above 2000 bps fails", async () => {
+    const tx = program.methods
+      .updatePerformanceFee(2500)
+      .accounts({
+        vault: govVaultPda,
+        authority: govOwner.publicKey,
+      })
+      .signers([govOwner]);
+
+    await expect(tx.rpc()).rejects.toThrow("PerformanceFeeExceedsMax");
+  });
+
+  it("GOV-4: Authority transfer works", async () => {
+    const newAuthority = anchor.web3.Keypair.generate();
+    await provider.connection.confirmTransaction(
+      await provider.connection.requestAirdrop(newAuthority.publicKey, 1e9)
+    );
+
+    // Transfer authority
+    await program.methods
+      .transferAuthority(newAuthority.publicKey)
+      .accounts({
+        vault: govVaultPda,
+        authority: govOwner.publicKey,
+      })
+      .signers([govOwner])
+      .rpc();
+
+    // Verify new authority
+    let vault = await program.account.vault.fetch(govVaultPda);
+    expect(vault.authority.toString()).toBe(newAuthority.publicKey.toString());
+
+    // Old authority should fail
+    const oldAuthorityTx = program.methods
+      .updatePerformanceFee(1000)
+      .accounts({
+        vault: govVaultPda,
+        authority: govOwner.publicKey,
+      })
+      .signers([govOwner]);
+
+    await expect(oldAuthorityTx.rpc()).rejects.toThrow();
+
+    // New authority should succeed
+    await program.methods
+      .updatePerformanceFee(1000)
+      .accounts({
+        vault: govVaultPda,
+        authority: newAuthority.publicKey,
+      })
+      .signers([newAuthority])
+      .rpc();
+
+    vault = await program.account.vault.fetch(govVaultPda);
+    expect(vault.performanceFeeBps).toBe(1000);
+
+    // Transfer back for remaining tests
+    await program.methods
+      .transferAuthority(govOwner.publicKey)
+      .accounts({
+        vault: govVaultPda,
+        authority: newAuthority.publicKey,
+      })
+      .signers([newAuthority])
+      .rpc();
+  });
+
+  it("GOV-5: After revoke -> all governance calls fail", async () => {
+    // Create a separate vault for revocation test (to not affect other tests)
+    const revokeOwner = anchor.web3.Keypair.generate();
+    await provider.connection.confirmTransaction(
+      await provider.connection.requestAirdrop(revokeOwner.publicKey, 5e9)
+    );
+
+    const [revokeVaultPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("vault"), revokeOwner.publicKey.toBuffer()],
+      program.programId
+    );
+
+    const [revokeVaultSignerPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("vault_signer"), revokeVaultPda.toBuffer()],
+      program.programId
+    );
+
+    const [revokeVaultShareMintPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("vault_share_mint"), revokeVaultPda.toBuffer()],
+      program.programId
+    );
+
+    const [revokePrincipalVaultPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("principal-vault"), revokeVaultPda.toBuffer()],
+      program.programId
+    );
+
+    const [revokeRevenueVaultPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("revenue-vault"), revokeVaultPda.toBuffer()],
+      program.programId
+    );
+
+    const [revokeTreasuryPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("treasury"), revokeVaultPda.toBuffer()],
+      program.programId
+    );
+
+    const revokePaymentMint = await createMint(
+      provider.connection,
+      (payer as anchor.Wallet).payer,
+      (payer as anchor.Wallet).publicKey,
+      null,
+      6
+    );
+
+    // Initialize vault
+    await program.methods
+      .initializeVault("Revoke Test Vault", new anchor.BN(1_000_000), new anchor.BN(100), 500)
+      .accounts({
+        owner: revokeOwner.publicKey,
+        vault: revokeVaultPda,
+        vaultSigner: revokeVaultSignerPda,
+        paymentMint: revokePaymentMint,
+        principalVault: revokePrincipalVaultPda,
+        revenueVault: revokeRevenueVaultPda,
+        treasury: revokeTreasuryPda,
+        vaultShareMint: revokeVaultShareMintPda,
+        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      })
+      .signers([revokeOwner])
+      .rpc();
+
+    // Verify authority is set
+    let vault = await program.account.vault.fetch(revokeVaultPda);
+    expect(vault.authority.toString()).toBe(revokeOwner.publicKey.toString());
+
+    // Revoke authority
+    await program.methods
+      .revokeAuthority()
+      .accounts({
+        vault: revokeVaultPda,
+        authority: revokeOwner.publicKey,
+      })
+      .signers([revokeOwner])
+      .rpc();
+
+    // Verify authority is now default (zero)
+    vault = await program.account.vault.fetch(revokeVaultPda);
+    expect(vault.authority.toString()).toBe(PublicKey.default.toString());
+
+    // All governance calls should now fail with GovernanceDisabled
+
+    // update_performance_fee should fail
+    const feeTx = program.methods
+      .updatePerformanceFee(1000)
+      .accounts({
+        vault: revokeVaultPda,
+        authority: revokeOwner.publicKey,
+      })
+      .signers([revokeOwner]);
+
+    await expect(feeTx.rpc()).rejects.toThrow();
+
+    // transfer_authority should fail
+    const transferTx = program.methods
+      .transferAuthority(revokeOwner.publicKey)
+      .accounts({
+        vault: revokeVaultPda,
+        authority: revokeOwner.publicKey,
+      })
+      .signers([revokeOwner]);
+
+    await expect(transferTx.rpc()).rejects.toThrow();
+
+    // revoke_authority should fail (already revoked)
+    const revokeTx = program.methods
+      .revokeAuthority()
+      .accounts({
+        vault: revokeVaultPda,
+        authority: revokeOwner.publicKey,
+      })
+      .signers([revokeOwner]);
+
+    await expect(revokeTx.rpc()).rejects.toThrow();
+  });
+
+  it("GOV-6: Cannot transfer authority to zero address", async () => {
+    const tx = program.methods
+      .transferAuthority(PublicKey.default)
+      .accounts({
+        vault: govVaultPda,
+        authority: govOwner.publicKey,
+      })
+      .signers([govOwner]);
+
+    await expect(tx.rpc()).rejects.toThrow("InvalidAuthority");
+  });
+});
+
+// =============================================================================
+// FUZZ INVARIANT ENGINE
+// =============================================================================
+describe("Fuzz Invariant Engine", () => {
+  const provider = anchor.AnchorProvider.env();
+  anchor.setProvider(provider);
+  const program = anchor.workspace.TokenizedYieldInfrastructure as Program<TokenizedYieldInfrastructure>;
+
+  const payer = provider.wallet;
+
+  let fuzzVaultPda: PublicKey;
+  let fuzzVaultSignerPda: PublicKey;
+  let fuzzVaultShareMintPda: PublicKey;
+  let fuzzPrincipalVaultPda: PublicKey;
+  let fuzzRevenueVaultPda: PublicKey;
+  let fuzzTreasuryPda: PublicKey;
+  let fuzzPaymentMint: PublicKey;
+  let fuzzOwner: anchor.web3.Keypair;
+  let fuzzUsers: anchor.web3.Keypair[] = [];
+  let fuzzUserAtas: PublicKey[] = [];
+  let fuzzUserShareholderPdas: PublicKey[] = [];
+  let fuzzUserShareAtas: PublicKey[] = [];
+  let depositorAta: PublicKey;
+
+  const NUM_USERS = 5;
+  const NUM_OPERATIONS = 100;
+
+  // Helper to get random int
+  const randomInt = (min: number, max: number) => Math.floor(Math.random() * (max - min + 1)) + min;
+
+  // Full invariant check
+  async function assertAllInvariants() {
+    const vault = await program.account.vault.fetch(fuzzVaultPda);
+    
+    // 1. Share Conservation Invariant
+    const shareholders = await program.account.userStake.all([
+      { memcmp: { offset: 8 + 1 + 32, bytes: fuzzVaultPda.toBase58() } }
+    ]);
+    const totalUserShares = shareholders.reduce(
+      (acc, s) => acc.add(new anchor.BN(s.account.quantity)), 
+      new anchor.BN(0)
+    );
+    expect(totalUserShares.toString()).toBe(vault.mintedShares.toString());
+
+    // 2. Supply Cap Invariant
+    expect(vault.mintedShares.lte(vault.totalShares)).toBe(true);
+
+    // 3. Remainder Bound Invariant
+    if (vault.mintedShares.gt(new anchor.BN(0))) {
+      expect(new anchor.BN(vault.rewardRemainder.toString()).lt(vault.mintedShares)).toBe(true);
+    }
+
+    // 4. Principal Solvency Invariant
+    const principalBalance = (await provider.connection.getTokenAccountBalance(fuzzPrincipalVaultPda)).value.amount;
+    const expectedPrincipal = vault.mintedShares.mul(vault.pricePerShare);
+    expect(new anchor.BN(principalBalance).gte(expectedPrincipal)).toBe(true);
+
+    // 5. Treasury Accounting Invariant
+    const treasuryBalance = (await provider.connection.getTokenAccountBalance(fuzzTreasuryPda)).value.amount;
+    expect(new anchor.BN(treasuryBalance).toString()).toBe(vault.totalFeesCollected.toString());
+  }
+
+  beforeAll(async () => {
+    fuzzOwner = anchor.web3.Keypair.generate();
+    await provider.connection.confirmTransaction(
+      await provider.connection.requestAirdrop(fuzzOwner.publicKey, 10e9)
+    );
+
+    [fuzzVaultPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("vault"), fuzzOwner.publicKey.toBuffer()],
+      program.programId
+    );
+
+    [fuzzVaultSignerPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("vault_signer"), fuzzVaultPda.toBuffer()],
+      program.programId
+    );
+
+    [fuzzVaultShareMintPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("vault_share_mint"), fuzzVaultPda.toBuffer()],
+      program.programId
+    );
+
+    [fuzzPrincipalVaultPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("principal-vault"), fuzzVaultPda.toBuffer()],
+      program.programId
+    );
+
+    [fuzzRevenueVaultPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("revenue-vault"), fuzzVaultPda.toBuffer()],
+      program.programId
+    );
+
+    [fuzzTreasuryPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("treasury"), fuzzVaultPda.toBuffer()],
+      program.programId
+    );
+
+    fuzzPaymentMint = await createMint(
+      provider.connection,
+      (payer as anchor.Wallet).payer,
+      (payer as anchor.Wallet).publicKey,
+      null,
+      6
+    );
+
+    // Setup depositor ATA for revenue deposits
+    depositorAta = await createAccount(
+      provider.connection,
+      (payer as anchor.Wallet).payer,
+      fuzzPaymentMint,
+      (payer as anchor.Wallet).publicKey
+    );
+    await mintTo(
+      provider.connection,
+      (payer as anchor.Wallet).payer,
+      fuzzPaymentMint,
+      depositorAta,
+      (payer as anchor.Wallet).publicKey,
+      1_000_000_000_000
+    );
+
+    // Setup users
+    for (let i = 0; i < NUM_USERS; i++) {
+      const user = anchor.web3.Keypair.generate();
+      await provider.connection.confirmTransaction(
+        await provider.connection.requestAirdrop(user.publicKey, 2e9)
+      );
+
+      const userAta = await createAccount(
+        provider.connection,
+        (payer as anchor.Wallet).payer,
+        fuzzPaymentMint,
+        user.publicKey
+      );
+
+      await mintTo(
+        provider.connection,
+        (payer as anchor.Wallet).payer,
+        fuzzPaymentMint,
+        userAta,
+        (payer as anchor.Wallet).publicKey,
+        100_000_000
+      );
+
+      const [shareholderPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("shareholder"), fuzzVaultPda.toBuffer(), user.publicKey.toBuffer()],
+        program.programId
+      );
+
+      fuzzUsers.push(user);
+      fuzzUserAtas.push(userAta);
+      fuzzUserShareholderPdas.push(shareholderPda);
+    }
+
+    // Initialize fuzz test vault with 10% fee
+    await program.methods
+      .initializeVault("Fuzz Test Vault", new anchor.BN(100_000_000), new anchor.BN(100), 1000)
+      .accounts({
+        owner: fuzzOwner.publicKey,
+        vault: fuzzVaultPda,
+        vaultSigner: fuzzVaultSignerPda,
+        paymentMint: fuzzPaymentMint,
+        principalVault: fuzzPrincipalVaultPda,
+        revenueVault: fuzzRevenueVaultPda,
+        treasury: fuzzTreasuryPda,
+        vaultShareMint: fuzzVaultShareMintPda,
+        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      })
+      .signers([fuzzOwner])
+      .rpc();
+
+    // Setup share ATAs for users
+    for (let i = 0; i < NUM_USERS; i++) {
+      const userShareAta = await anchor.utils.token.associatedAddress({
+        mint: fuzzVaultShareMintPda,
+        owner: fuzzUsers[i].publicKey
+      });
+      fuzzUserShareAtas.push(userShareAta);
+    }
+  });
+
+  it("FUZZ: 100 random operations maintain all invariants", async () => {
+    let mintedUsers = new Set<number>(); // Track which users have minted
+    
+    for (let op = 0; op < NUM_OPERATIONS; op++) {
+      const operation = randomInt(0, 3);
+      const userIdx = randomInt(0, NUM_USERS - 1);
+      const user = fuzzUsers[userIdx];
+
+      try {
+        switch (operation) {
+          case 0: // mint_shares
+            if (!mintedUsers.has(userIdx)) {
+              const amount = randomInt(1, 100);
+              await program.methods
+                .mintShares(new anchor.BN(amount))
+                .accounts({
+                  vault: fuzzVaultPda,
+                  vaultSigner: fuzzVaultSignerPda,
+                  payer: user.publicKey,
+                  payerAta: fuzzUserAtas[userIdx],
+                  principalVault: fuzzPrincipalVaultPda,
+                  revenueVault: fuzzRevenueVaultPda,
+                  vaultShareMint: fuzzVaultShareMintPda,
+                  shareholder: fuzzUserShareholderPdas[userIdx],
+                  investorShareAta: fuzzUserShareAtas[userIdx],
+                  associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+                  tokenProgram: TOKEN_PROGRAM_ID,
+                  systemProgram: SystemProgram.programId,
+                })
+                .signers([user])
+                .rpc();
+              mintedUsers.add(userIdx);
+            } else {
+              // Already minted, try adding more shares
+              const amount = randomInt(1, 10);
+              await program.methods
+                .mintShares(new anchor.BN(amount))
+                .accounts({
+                  vault: fuzzVaultPda,
+                  vaultSigner: fuzzVaultSignerPda,
+                  payer: user.publicKey,
+                  payerAta: fuzzUserAtas[userIdx],
+                  principalVault: fuzzPrincipalVaultPda,
+                  revenueVault: fuzzRevenueVaultPda,
+                  vaultShareMint: fuzzVaultShareMintPda,
+                  shareholder: fuzzUserShareholderPdas[userIdx],
+                  investorShareAta: fuzzUserShareAtas[userIdx],
+                  associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+                  tokenProgram: TOKEN_PROGRAM_ID,
+                  systemProgram: SystemProgram.programId,
+                })
+                .signers([user])
+                .rpc();
+            }
+            break;
+
+          case 1: // deposit_revenue
+            const vault = await program.account.vault.fetch(fuzzVaultPda);
+            if (vault.mintedShares.gt(new anchor.BN(0))) {
+              const revenueAmount = randomInt(1, 10000);
+              await program.methods
+                .depositRevenue(new anchor.BN(revenueAmount))
+                .accounts({
+                  vault: fuzzVaultPda,
+                  payer: (payer as anchor.Wallet).publicKey,
+                  payerAta: depositorAta,
+                  revenueVault: fuzzRevenueVaultPda,
+                  treasury: fuzzTreasuryPda,
+                  vaultSigner: fuzzVaultSignerPda,
+                  tokenProgram: TOKEN_PROGRAM_ID,
+                })
+                .signers([(payer as anchor.Wallet).payer])
+                .rpc();
+            }
+            break;
+
+          case 2: // harvest
+            if (mintedUsers.has(userIdx)) {
+              await program.methods
+                .harvest()
+                .accounts({
+                  vault: fuzzVaultPda,
+                  vaultSigner: fuzzVaultSignerPda,
+                  payer: user.publicKey,
+                  shareholder: fuzzUserShareholderPdas[userIdx],
+                  revenueVault: fuzzRevenueVaultPda,
+                  userAta: fuzzUserAtas[userIdx],
+                  tokenProgram: TOKEN_PROGRAM_ID,
+                })
+                .signers([user])
+                .rpc();
+            }
+            break;
+
+          case 3: // redeem_shares
+            if (mintedUsers.has(userIdx)) {
+              try {
+                const shareholder = await program.account.userStake.fetch(fuzzUserShareholderPdas[userIdx]);
+                if (shareholder.quantity.gt(new anchor.BN(0))) {
+                  const redeemAmount = randomInt(1, Math.min(shareholder.quantity.toNumber(), 10));
+                  await program.methods
+                    .redeemShares(new anchor.BN(redeemAmount))
+                    .accounts({
+                      vault: fuzzVaultPda,
+                      vaultSigner: fuzzVaultSignerPda,
+                      payer: user.publicKey,
+                      shareholder: fuzzUserShareholderPdas[userIdx],
+                      principalVault: fuzzPrincipalVaultPda,
+                      revenueVault: fuzzRevenueVaultPda,
+                      investorShareAta: fuzzUserShareAtas[userIdx],
+                      vaultShareMint: fuzzVaultShareMintPda,
+                      payerAta: fuzzUserAtas[userIdx],
+                      tokenProgram: TOKEN_PROGRAM_ID,
+                    })
+                    .signers([user])
+                    .rpc();
+                }
+              } catch (e) {
+                // Shareholder may not exist or have 0 shares, skip
+              }
+            }
+            break;
+        }
+      } catch (e) {
+        // Some operations may fail legitimately (e.g., insufficient balance)
+        // That's fine for fuzz testing - we just verify invariants hold
+      }
+
+      // Assert invariants after every 10 operations
+      if ((op + 1) % 10 === 0) {
+        await assertAllInvariants();
+      }
+    }
+
+    // Final invariant check
+    await assertAllInvariants();
+  }, 120000); // 2 minute timeout for fuzz test
 });

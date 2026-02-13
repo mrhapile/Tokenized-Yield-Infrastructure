@@ -34,6 +34,17 @@ pub struct Vault {
     /// Total fees collected (for Protocol Revenue Invariant verification)
     pub total_fees_collected: u64,
 
+    // Governance Layer
+    /// Authority that can modify protocol parameters (Pubkey::default() = governance disabled)
+    pub authority: Pubkey,
+
     pub bump: u8,
     pub signer_bump: u8,
+}
+
+impl Vault {
+    /// Returns true if governance is disabled (authority revoked)
+    pub fn is_governance_disabled(&self) -> bool {
+        self.authority == Pubkey::default()
+    }
 }

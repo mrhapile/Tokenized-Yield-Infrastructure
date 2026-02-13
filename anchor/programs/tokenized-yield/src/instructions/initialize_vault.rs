@@ -116,6 +116,9 @@ pub fn process_initialize_vault(
     vault.treasury = ctx.accounts.treasury.key();
     vault.total_fees_collected = 0;
 
+    // Governance Layer initialization - owner becomes initial authority
+    vault.authority = *ctx.accounts.owner.key;
+
     vault.bump = ctx.bumps.vault;
     vault.signer_bump = ctx.bumps.vault_signer;
 

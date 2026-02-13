@@ -12,3 +12,16 @@ pub use harvest::*;
 
 pub mod redeem_shares;
 pub use redeem_shares::*;
+
+// Governance Instructions
+pub mod update_performance_fee;
+pub use update_performance_fee::*;
+
+pub mod update_treasury;
+pub use update_treasury::*;
+
+pub mod transfer_authority;
+pub use transfer_authority::*;
+
+pub mod revoke_authority;
+pub use revoke_authority::*;

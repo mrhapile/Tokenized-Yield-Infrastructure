@@ -53,4 +53,14 @@ pub enum ErrorCode {
 
     #[msg("Invalid treasury account")]
     InvalidTreasury,
+
+    // Governance Layer Errors
+    #[msg("Unauthorized: caller is not the vault authority")]
+    Unauthorized,
+
+    #[msg("Governance is permanently disabled for this vault")]
+    GovernanceDisabled,
+
+    #[msg("Invalid authority: cannot set to zero address")]
+    InvalidAuthority,
 }

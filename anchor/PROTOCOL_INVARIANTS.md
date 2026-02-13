@@ -262,5 +262,100 @@ Authority: vault_signer PDA
 Mint: payment_mint (same as principal/revenue vaults)
 ```
 
+---
+
+## 16. Governance Safety Invariants
+
+The protocol implements a governance layer that allows controlled parameter updates while ensuring security through authority validation and optional permanent immutability.
+
+### 16.1 Authority Exclusivity Invariant
+
+Only the vault's designated authority may mutate governance-controlled parameters.
+
+$$
+\forall \text{ governance operations}: \text{caller} = \text{vault.authority}
+$$
+
+**Enforcement:**
+- All governance instructions (`update_performance_fee`, `update_treasury`, `transfer_authority`, `revoke_authority`) require the `authority` signer.
+- Account constraint: `authority.key() == vault.authority`.
+- `Unauthorized` error thrown if constraint fails.
+
+### 16.2 Fee Boundedness Under Governance Invariant
+
+Performance fee updates must respect the same bounds as initialization.
+
+$$
+\text{new\_fee\_bps} \le \text{MAX\_PERFORMANCE\_FEE\_BPS} = 2000
+$$
+
+**Enforcement:**
+- `update_performance_fee` validates `new_fee_bps <= 2000`.
+- `PerformanceFeeExceedsMax` error on violation.
+- Bound is enforced identically at initialization and update.
+
+### 16.3 Governance Finality Invariant (Irreversible Revocation)
+
+Once governance is revoked, it cannot be restored. The protocol becomes permanently immutable.
+
+$$
+\text{if } \text{vault.authority} = \text{Pubkey::default()} \Rightarrow \forall \text{ future governance calls fail}
+$$
+
+**Enforcement:**
+- `revoke_authority` sets `vault.authority = Pubkey::default()`.
+- All governance instructions check `!vault.is_governance_disabled()`.
+- `GovernanceDisabled` error thrown after revocation.
+- No instruction exists to restore authority from zero.
+
+### 16.4 Authority Transfer Safety Invariant
+
+Authority can only be transferred to valid, non-zero addresses.
+
+$$
+\text{new\_authority} \ne \text{Pubkey::default()}
+$$
+
+**Enforcement:**
+- `transfer_authority` explicitly rejects zero address.
+- `InvalidAuthority` error on violation.
+- Intentional revocation requires explicit `revoke_authority` call.
+
+### 16.5 Treasury Update Segregation Invariant
+
+Treasury updates must maintain capital segregation by ensuring the new treasury:
+1. Uses the same payment mint as the vault
+2. Is owned by the vault's signer PDA
+
+$$
+\text{new\_treasury.mint} = \text{vault.payment\_mint}
+$$
+$$
+\text{new\_treasury.owner} = \text{vault\_signer}
+$$
+
+**Enforcement:**
+- `update_treasury` account constraints validate both conditions.
+- `InvalidTreasury` error on violation.
+- Prevents arbitrary fund redirection.
+
+### 16.6 Governance State Transitions
+
+Valid state transitions for `vault.authority`:
+
+```
+┌─────────────────┐    transfer_authority(X)    ┌─────────────────┐
+│  Authority: A   │ ─────────────────────────► │  Authority: X   │
+└─────────────────┘                             └─────────────────┘
+        │                                               │
+        │ revoke_authority()                            │ revoke_authority()
+        ▼                                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              Authority: Pubkey::default()                       │
+│              (GOVERNANCE PERMANENTLY DISABLED)                  │
+│              No transitions possible from this state            │
+└─────────────────────────────────────────────────────────────────┘
+```
+
 
 

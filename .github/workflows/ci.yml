@@ -1,0 +1,140 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master, develop]
+
+env:
+  SOLANA_VERSION: 1.18.17
+  ANCHOR_VERSION: 0.31.1
+  NODE_VERSION: 20
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'yarn'
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            anchor/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install Solana
+        run: |
+          sh -c "$(curl -sSfL https://release.solana.com/v${{ env.SOLANA_VERSION }}/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+
+      - name: Install Anchor
+        run: |
+          cargo install --git https://github.com/coral-xyz/anchor --tag v${{ env.ANCHOR_VERSION }} anchor-cli --locked --force
+
+      - name: Setup Solana keypair
+        run: |
+          solana-keygen new --no-bip39-passphrase
+          solana config set --url localhost
+
+      - name: Install dependencies
+        run: |
+          cd anchor
+          yarn install --frozen-lockfile
+
+      - name: Cargo check
+        run: |
+          cd anchor
+          cargo check --package tokenized_yield_infrastructure
+        
+      - name: Cargo test
+        run: |
+          cd anchor
+          cargo test --package tokenized_yield_infrastructure
+
+      - name: Anchor build
+        run: |
+          cd anchor
+          anchor build
+
+      - name: Anchor test
+        run: |
+          cd anchor
+          anchor test
+
+  lint:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            anchor/target/
+          key: ${{ runner.os }}-cargo-lint-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-lint-
+
+      - name: Cargo fmt check
+        run: |
+          cd anchor/programs/tokenized-yield
+          cargo fmt -- --check
+
+      - name: Cargo clippy
+        run: |
+          cd anchor
+          cargo clippy --package tokenized_yield_infrastructure -- -D warnings
+        continue-on-error: true  # Clippy warnings don't fail the build initially
+
+  security:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+
+      - name: Security audit
+        run: |
+          cd anchor
+          cargo audit
+        continue-on-error: true  # Don't fail on audit warnings initially

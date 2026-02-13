@@ -39,4 +39,28 @@ pub mod tokenized_yield_infrastructure {
     pub fn redeem_shares(ctx: Context<RedeemShares>, amount: u64) -> Result<()> {
         instructions::process_redeem_shares(ctx, amount)
     }
+
+    // =========================================================================
+    // GOVERNANCE INSTRUCTIONS
+    // =========================================================================
+
+    /// Update performance fee (authority only, max 20%)
+    pub fn update_performance_fee(ctx: Context<UpdatePerformanceFee>, new_fee_bps: u16) -> Result<()> {
+        instructions::process_update_performance_fee(ctx, new_fee_bps)
+    }
+
+    /// Update treasury account (authority only, must maintain capital segregation)
+    pub fn update_treasury(ctx: Context<UpdateTreasury>) -> Result<()> {
+        instructions::process_update_treasury(ctx)
+    }
+
+    /// Transfer governance authority to new address
+    pub fn transfer_authority(ctx: Context<TransferAuthority>, new_authority: Pubkey) -> Result<()> {
+        instructions::process_transfer_authority(ctx, new_authority)
+    }
+
+    /// Irreversibly revoke governance authority - protocol becomes immutable
+    pub fn revoke_authority(ctx: Context<RevokeAuthority>) -> Result<()> {
+        instructions::process_revoke_authority(ctx)
+    }
 }
