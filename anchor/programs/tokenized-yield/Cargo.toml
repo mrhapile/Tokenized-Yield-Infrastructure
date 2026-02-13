@@ -1,0 +1,22 @@
+[package]
+name = "tokenized_yield_infrastructure"
+version = "0.1.0"
+description = "RWA Farm-Tokenization built for solana hackthon, hoping to farm some ranking/cash-prize"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "tokenized_yield_infrastructure"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+
+
+[dependencies]
+anchor-lang = {version = "0.31.1", features = ["init-if-needed"]}
+anchor-spl = "0.31.1"
