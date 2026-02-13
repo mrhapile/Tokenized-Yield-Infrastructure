@@ -125,10 +125,10 @@ pub fn process_mint_shares(ctx: Context<MintShares>, amount: u64) -> Result<()> 
         shareholder.bump = ctx.bumps.shareholder;
     }
 
-    let new_quantity = (shareholder.quantity as u128)
-        .checked_add(amount as u128)
+    let new_quantity = shareholder.quantity
+        .checked_add(amount)
         .ok_or(ErrorCode::Overflow)?;
-    shareholder.quantity = new_quantity as u64;
+    shareholder.quantity = new_quantity;
     shareholder.debt_claimed = 0;
     Ok(())
 }
