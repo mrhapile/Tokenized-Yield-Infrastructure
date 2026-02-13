@@ -10,4 +10,13 @@ pub enum ErrorCode {
 
     #[msg("Exceeds Total Supply")]
     ExceedsTotalSupply,
+
+    #[msg("Math overflow occurred")]
+    MathOverflow,
+
+    #[msg("Invalid payment amount: does not match price per share")]
+    InvalidPaymentAmount,
+
+    #[msg("Share amount must be greater than zero")]
+    InvalidShareAmount,
 }

@@ -57,9 +57,9 @@ pub struct MintShares<'info> {
     pub token_program: Program<'info, Token>,
 }
 
-pub fn process_mint_shares(ctx: Context<MintShares>, amount: u64, pay_amount: u64) -> Result<()> {
+pub fn process_mint_shares(ctx: Context<MintShares>, amount: u64) -> Result<()> {
     let vault = &mut ctx.accounts.vault;
-    require!(amount > 0, ErrorCode::InvalidShares);
+    require!(amount > 0, ErrorCode::InvalidShareAmount);
 
     let new_minted = vault
         .minted_shares
@@ -70,6 +70,12 @@ pub fn process_mint_shares(ctx: Context<MintShares>, amount: u64, pay_amount: u6
         ErrorCode::ExceedsTotalSupply
     );
 
+    // Calculate expected payment internally
+    // Enforce strict economic validation
+    let expected_payment = amount
+        .checked_mul(vault.price_per_share)
+        .ok_or(ErrorCode::MathOverflow)?;
+
     // payer ata account to payment-vault
     let cpi_accounts = Transfer {
         from: ctx.accounts.payer_ata.to_account_info(),
@@ -77,7 +83,7 @@ pub fn process_mint_shares(ctx: Context<MintShares>, amount: u64, pay_amount: u6
         authority: ctx.accounts.payer.to_account_info(),
     };
     let cpi_program = ctx.accounts.token_program.to_account_info();
-    transfer(CpiContext::new(cpi_program, cpi_accounts), pay_amount)?;
+    transfer(CpiContext::new(cpi_program, cpi_accounts), expected_payment)?;
 
     let vault_key = vault.key();
     // token to payers ata

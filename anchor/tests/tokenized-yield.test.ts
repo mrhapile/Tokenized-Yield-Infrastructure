@@ -129,7 +129,7 @@ describe("Tokenized Yield Lifecycle", () => {
     });
 
     await program.methods
-      .mintShares(amount, payAmount)
+      .mintShares(amount)
       .accounts({
         vault: vaultPda,
         vaultSigner: vaultSignerPda,
@@ -168,7 +168,7 @@ describe("Tokenized Yield Lifecycle", () => {
     );
 
     const tx = program.methods
-      .mintShares(new anchor.BN(0), new anchor.BN(100))
+      .mintShares(new anchor.BN(0))
       .accounts({
         vault: vaultPda,
         vaultSigner: vaultSignerPda,
@@ -183,6 +183,6 @@ describe("Tokenized Yield Lifecycle", () => {
       })
       .signers([buyer]);
 
-    await expect(tx.rpc()).rejects.toThrow("InvalidShares");
+    await expect(tx.rpc()).rejects.toThrow("InvalidShareAmount");
   });
 });
