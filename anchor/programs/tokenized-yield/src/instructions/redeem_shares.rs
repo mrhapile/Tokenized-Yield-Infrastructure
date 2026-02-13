@@ -28,10 +28,17 @@ pub struct RedeemShares<'info> {
 
     #[account(
         mut,
-        constraint = payment_vault.mint == vault.payment_mint @ ErrorCode::InvalidPaymentMint,
-        constraint = payment_vault.owner == vault_signer.key() @ ErrorCode::InvalidPaymentVault
+        constraint = principal_vault.key() == vault.principal_vault @ ErrorCode::InvalidPaymentVault,
+        constraint = principal_vault.owner == vault_signer.key() @ ErrorCode::InvalidPaymentVault
     )]
-    pub payment_vault: Account<'info, TokenAccount>,
+    pub principal_vault: Account<'info, TokenAccount>,
+
+    #[account(
+        mut,
+        constraint = revenue_vault.key() == vault.revenue_vault @ ErrorCode::InvalidPaymentVault,
+        constraint = revenue_vault.owner == vault_signer.key() @ ErrorCode::InvalidPaymentVault
+    )]
+    pub revenue_vault: Account<'info, TokenAccount>,
 
     #[account(
         mut,
@@ -60,7 +67,8 @@ pub struct RedeemShares<'info> {
 pub fn process_redeem_shares(ctx: Context<RedeemShares>, amount: u64) -> Result<()> {
     let vault = &mut ctx.accounts.vault;
     let shareholder = &mut ctx.accounts.shareholder;
-    let payment_vault = &mut ctx.accounts.payment_vault;
+    let principal_vault = &mut ctx.accounts.principal_vault;
+    let revenue_vault = &mut ctx.accounts.revenue_vault;
     let token_program = &ctx.accounts.token_program;
     let vault_signer = &ctx.accounts.vault_signer;
 
@@ -87,7 +95,7 @@ pub fn process_redeem_shares(ctx: Context<RedeemShares>, amount: u64) -> Result<
         let pending_u64 = u64::try_from(pending).map_err(|_| ErrorCode::Overflow)?;
 
         require!(
-            payment_vault.amount >= pending_u64,
+            revenue_vault.amount >= pending_u64,
             ErrorCode::InsufficientVaultBalance
         );
 
@@ -95,7 +103,7 @@ pub fn process_redeem_shares(ctx: Context<RedeemShares>, amount: u64) -> Result<
         shareholder.reward_debt = accumulated;
 
         let cpi_accounts_reward = Transfer {
-            from: payment_vault.to_account_info(),
+            from: revenue_vault.to_account_info(),
             to: ctx.accounts.payer_ata.to_account_info(), // Send reward to payer
             authority: vault_signer.to_account_info(),
         };
@@ -111,7 +119,7 @@ pub fn process_redeem_shares(ctx: Context<RedeemShares>, amount: u64) -> Result<
         .ok_or(ErrorCode::MathOverflow)?;
 
     require!(
-        payment_vault.amount >= principal,
+        principal_vault.amount >= principal,
         ErrorCode::InsufficientVaultBalance
     );
 
@@ -148,7 +156,7 @@ pub fn process_redeem_shares(ctx: Context<RedeemShares>, amount: u64) -> Result<
 
     // 2. Transfer principal
     let cpi_accounts_principal = Transfer {
-        from: payment_vault.to_account_info(),
+        from: principal_vault.to_account_info(),
         to: ctx.accounts.payer_ata.to_account_info(),
         authority: vault_signer.to_account_info(),
     };

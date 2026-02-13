@@ -19,10 +19,10 @@ pub struct DepositRevenue<'info> {
 
     #[account(
         mut,
-        constraint = payment_vault.mint == vault.payment_mint @ ErrorCode::InvalidPaymentMint,
-        constraint = payment_vault.owner == vault_signer.key() @ ErrorCode::InvalidPaymentVault
+        constraint = revenue_vault.key() == vault.revenue_vault @ ErrorCode::InvalidPaymentVault,
+        constraint = revenue_vault.owner == vault_signer.key() @ ErrorCode::InvalidPaymentVault
     )]
-    pub payment_vault: Account<'info, TokenAccount>,
+    pub revenue_vault: Account<'info, TokenAccount>,
 
     /// CHECK: PDA Signer for payment vault check
     #[account(
@@ -40,10 +40,10 @@ pub fn process_deposit_revenue(ctx: Context<DepositRevenue>, amount: u64) -> Res
     require!(vault.minted_shares > 0, ErrorCode::NoSharesMinted);
     require!(amount > 0, ErrorCode::InvalidRevenueAmount);
 
-    // Transfer tokens into payment_vault
+    // Transfer tokens into revenue_vault
     let cpi_accounts = Transfer {
         from: ctx.accounts.payer_ata.to_account_info(),
-        to: ctx.accounts.payment_vault.to_account_info(),
+        to: ctx.accounts.revenue_vault.to_account_info(),
         authority: ctx.accounts.payer.to_account_info(),
     };
     let cpi_program = ctx.accounts.token_program.to_account_info();

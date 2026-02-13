@@ -11,7 +11,7 @@ pub struct Vault {
 
     // vaults
     pub payment_mint: Pubkey,
-    pub payment_vault: Pubkey,
+    pub principal_vault: Pubkey,
     pub revenue_vault: Pubkey,
 
     pub total_shares: u64,

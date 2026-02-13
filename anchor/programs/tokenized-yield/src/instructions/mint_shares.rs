@@ -32,10 +32,17 @@ pub struct MintShares<'info> {
 
     #[account(
         mut,
-        constraint = payment_vault.mint == vault.payment_mint @ ErrorCode::InvalidPaymentMint,
-        constraint = payment_vault.owner == vault_signer.key() @ ErrorCode::InvalidPaymentVault
+        constraint = principal_vault.key() == vault.principal_vault @ ErrorCode::InvalidPaymentVault,
+        constraint = principal_vault.owner == vault_signer.key() @ ErrorCode::InvalidPaymentVault
     )]
-    pub payment_vault: Account<'info, TokenAccount>,
+    pub principal_vault: Account<'info, TokenAccount>,
+
+    #[account(
+        mut,
+        constraint = revenue_vault.key() == vault.revenue_vault @ ErrorCode::InvalidPaymentVault,
+        constraint = revenue_vault.owner == vault_signer.key() @ ErrorCode::InvalidPaymentVault
+    )]
+    pub revenue_vault: Account<'info, TokenAccount>,
 
     #[account(
         mut,
@@ -138,12 +145,9 @@ pub fn process_mint_shares(ctx: Context<MintShares>, amount: u64) -> Result<()> 
         let seeds = &[b"vault_signer".as_ref(), vault_key.as_ref(), &[vault.signer_bump]];
         let signer = &[&seeds[..]];
 
-        // We transfer form payment_vault to payer_ata (user's wallet)
-        // Reusing accounts already passed. 
-        // payment_vault is source (owned by vault_signer)
-        // payer_ata is dest (owned by payer)
+        // We transfer from revenue_vault to payer_ata (user's wallet)
         let cpi_accounts_reward = Transfer {
-            from: ctx.accounts.payment_vault.to_account_info(),
+            from: ctx.accounts.revenue_vault.to_account_info(),
             to: ctx.accounts.payer_ata.to_account_info(),
             authority: ctx.accounts.vault_signer.to_account_info(),
         };
@@ -151,10 +155,10 @@ pub fn process_mint_shares(ctx: Context<MintShares>, amount: u64) -> Result<()> 
         transfer(CpiContext::new_with_signer(cpi_program_token, cpi_accounts_reward, signer), pending_u64)?;
     }
     
-    // Transfer payment to vault
+    // Transfer payment to principal vault
     let cpi_accounts_transfer = Transfer {
         from: ctx.accounts.payer_ata.to_account_info(),
-        to: ctx.accounts.payment_vault.to_account_info(),
+        to: ctx.accounts.principal_vault.to_account_info(),
         authority: ctx.accounts.payer.to_account_info(),
     };
     let cpi_program_token = ctx.accounts.token_program.to_account_info();

@@ -45,11 +45,11 @@ pub struct InitializeVault<'info> {
         init,
         token::mint = payment_mint,
         token::authority = vault_signer,
-        seeds = [b"payment-vault", vault.key().as_ref()],
+        seeds = [b"principal-vault", vault.key().as_ref()],
         bump,
         payer = owner
     )]
-    pub payment_vault: Account<'info, TokenAccount>,
+    pub principal_vault: Account<'info, TokenAccount>,
 
     pub payment_mint: Account<'info, Mint>,
 
@@ -81,7 +81,7 @@ pub fn process_initialize_vault(
 
     vault.vault_share_mint = ctx.accounts.vault_share_mint.key();
     vault.payment_mint = ctx.accounts.payment_mint.key();
-    vault.payment_vault = ctx.accounts.payment_vault.key();
+    vault.principal_vault = ctx.accounts.principal_vault.key();
     vault.revenue_vault = ctx.accounts.revenue_vault.key();
 
     vault.total_shares = total_shares;

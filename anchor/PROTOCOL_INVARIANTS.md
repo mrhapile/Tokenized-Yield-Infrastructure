@@ -154,4 +154,25 @@ A user redeeming shares must receive all pending rewards accrued up to the momen
 - `redeem_shares` calls the reward sync logic (identical to `harvest`) *before* modifying `quantity`.
 - `reward_debt` is re-calculated based on the *new* lower quantity after redemption.
 
+## 14. Capital Segregation Invariants
+
+The protocol maintains strict separation between principal (user deposits) and revenue (protocol yield).
+
+### Principal Solvency
+$$ \text{principal\_vault.amount} \ge \text{minted\_shares} \times \text{price\_per\_share} $$
+
+**Enforcement:**
+- `mint_shares` deposits only to `principal_vault`.
+- `redeem_shares` withdraws principal only from `principal_vault`.
+- Checks against `InsufficientVaultBalance` ensure the principal remains untouched for other operations.
+
+### Revenue Solvency
+$$ \text{revenue\_vault.amount} \ge \sum(\text{unclaimed\_rewards}) $$
+
+**Enforcement:**
+- `deposit_revenue` deposits only to `revenue_vault`.
+- `harvest` and `redeem_shares` (reward portion) withdraw only from `revenue_vault`.
+- Prevents cross-contamination where rewards could theoretically be paid out of user principal if the yield logic failed.
+
+
 

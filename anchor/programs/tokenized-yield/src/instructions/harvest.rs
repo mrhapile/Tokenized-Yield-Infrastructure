@@ -26,10 +26,10 @@ pub struct Harvest<'info> {
 
     #[account(
         mut,
-        constraint = payment_vault.mint == vault.payment_mint @ ErrorCode::InvalidPaymentMint,
-        constraint = payment_vault.owner == vault_signer.key() @ ErrorCode::InvalidPaymentVault
+        constraint = revenue_vault.key() == vault.revenue_vault @ ErrorCode::InvalidPaymentVault,
+        constraint = revenue_vault.owner == vault_signer.key() @ ErrorCode::InvalidPaymentVault
     )]
-    pub payment_vault: Account<'info, TokenAccount>,
+    pub revenue_vault: Account<'info, TokenAccount>,
 
     #[account(
         mut,
@@ -44,7 +44,7 @@ pub struct Harvest<'info> {
 pub fn process_harvest(ctx: Context<Harvest>) -> Result<()> {
     let vault = &ctx.accounts.vault;
     let shareholder = &mut ctx.accounts.shareholder;
-    let payment_vault = &mut ctx.accounts.payment_vault;
+    let revenue_vault = &mut ctx.accounts.revenue_vault;
     let user_ata = &mut ctx.accounts.user_ata;
     let token_program = &ctx.accounts.token_program;
     let vault_signer = &ctx.accounts.vault_signer;
@@ -65,7 +65,7 @@ pub fn process_harvest(ctx: Context<Harvest>) -> Result<()> {
 
         // Solvency check
         require!(
-            payment_vault.amount >= pending_u64,
+            revenue_vault.amount >= pending_u64,
             ErrorCode::InsufficientVaultBalance
         );
 
@@ -78,7 +78,7 @@ pub fn process_harvest(ctx: Context<Harvest>) -> Result<()> {
         let signer = &[&seeds[..]];
 
         let cpi_accounts = Transfer {
-            from: payment_vault.to_account_info(),
+            from: revenue_vault.to_account_info(),
             to: user_ata.to_account_info(),
             authority: vault_signer.to_account_info(),
         };
