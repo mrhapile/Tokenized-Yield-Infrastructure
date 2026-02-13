@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useConnection } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -57,8 +57,8 @@ export function InvariantMonitor({
   const [checking, setChecking] = useState(false);
   const [lastCheck, setLastCheck] = useState<Date | null>(null);
 
-  // Define invariants
-  const invariants: Invariant[] = [
+  // Define invariants - memoized to prevent re-creation on each render
+  const invariants: Invariant[] = useMemo(() => [
     {
       id: "INV-1",
       name: "Program Ownership",
@@ -182,7 +182,7 @@ export function InvariantMonitor({
         }
       },
     },
-  ];
+  ], [connection, programId, vaultPda, principalVaultPda, revenueVaultPda, treasuryPda]);
 
   const runChecks = useCallback(async () => {
     setChecking(true);
@@ -196,12 +196,12 @@ export function InvariantMonitor({
           passed,
           timestamp: new Date(),
         });
-      } catch (err: any) {
+      } catch (err) {
         newResults.set(invariant.id, {
           id: invariant.id,
           passed: false,
           timestamp: new Date(),
-          error: err.message,
+          error: err instanceof Error ? err.message : "Unknown error",
         });
       }
     }
@@ -209,7 +209,7 @@ export function InvariantMonitor({
     setResults(newResults);
     setLastCheck(new Date());
     setChecking(false);
-  }, [connection, invariants]);
+  }, [invariants]);
 
   useEffect(() => {
     runChecks();

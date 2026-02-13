@@ -1,59 +1,74 @@
 import { Card } from "@/components/ui/card";
-import { Coins, Repeat } from "lucide-react";
+import { FileCode2, Coins, BarChart3, Shield } from "lucide-react";
 
 const steps = [
     {
-        icon: Coins,
-        title: "Tokenize Real-World Assets",
-        description: "Convert physical assets into liquid on-chain shares using our vault standard.",
+        step: "01",
+        icon: FileCode2,
+        title: "Initialize Vault",
+        description: "Deploy a new vault with configurable parameters: share allocation, fee structure, and governance settings.",
+        code: "initialize_vault(config)",
     },
     {
+        step: "02",
         icon: Coins,
-        title: "Earn Yield Distributions",
-        description: "Hold yield shares to earn revenue from infrastructure operations and verified cash flows.",
+        title: "Issue Shares",
+        description: "Mint SPL tokens representing fractional ownership. Each share class has distinct rights and distribution ratios.",
+        code: "issue_shares(amount, class)",
     },
     {
-        icon: Repeat,
-        title: "Trade & Grow",
-        description: "Trade tokens on our marketplace and grow your agricultural investment portfolio with ease.",
+        step: "03",
+        icon: BarChart3,
+        title: "Distribute Yield",
+        description: "Revenue flows are automatically distributed to shareholders pro-rata based on their holdings.",
+        code: "distribute_yield(revenue)",
+    },
+    {
+        step: "04",
+        icon: Shield,
+        title: "Audit Trail",
+        description: "Every transaction is recorded on-chain with timestamps, amounts, and participant addresses.",
+        code: "get_transaction_log()",
     },
 ];
 
 const HowItWorks = () => {
     return (
-        <section id="how-it-works" className="py-16 md:py-24 bg-secondary/30 bg-gradient-to-b from-background/90 via-background/80 to-background">
+        <section id="how-it-works" className="py-20 bg-secondary/30">
             <div className="container mx-auto px-4">
-                <div className="text-center mb-12 md:mb-16">
-                    <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold mb-4">How It Works</h2>
-                    <p className="text-lg md:text-xl text-muted-foreground max-w-2xl mx-auto px-4">
-                        Three simple steps to start your agricultural investment journey
+                <div className="max-w-2xl mb-12">
+                    <h2 className="text-3xl font-bold text-foreground mb-4">
+                        Protocol Architecture
+                    </h2>
+                    <p className="text-muted-foreground">
+                        A composable framework for tokenized ownership and automated distributions.
                     </p>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8 max-w-6xl mx-auto">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                     {steps.map((step, index) => (
-                        <div key={index} className="relative">
-                            <Card className="p-6 md:p-8 bg-gradient-card border-primary/20 hover:border-primary/40 transition-all duration-300 glow-primary group h-full">
-                                <div className="flex flex-col items-center text-center">
-                                    <div className="mb-4 md:mb-6 relative">
-                                        <div className="w-16 h-16 rounded-full bg-primary/20 flex items-center justify-center group-hover:bg-primary/30 transition-colors">
-                                            <step.icon className="w-8 h-8 text-primary" />
-                                        </div>
-                                        <div className="absolute -top-2 -right-2 w-8 h-8 rounded-full bg-accent flex items-center justify-center text-sm font-bold text-accent-foreground">
-                                            {index + 1}
-                                        </div>
-                                    </div>
-                                    <h3 className="text-2xl font-bold mb-4 text-foreground">{step.title}</h3>
-                                    <p className="text-muted-foreground">{step.description}</p>
+                        <Card 
+                            key={index} 
+                            className="p-5 bg-card border-border hover:border-primary/30 transition-colors"
+                        >
+                            <div className="flex items-start justify-between mb-4">
+                                <div className="w-10 h-10 rounded bg-primary/10 flex items-center justify-center">
+                                    <step.icon className="w-5 h-5 text-primary" />
                                 </div>
-                            </Card>
-
-                            {index < steps.length - 1 && (
-                                <div className="hidden md:block absolute top-1/2 -right-7 transform -translate-y-1/2 z-10">
-                                    <div className="text-primary/30 text-3xl">→</div>
-                                </div>
-                            )}
-                        </div>
+                                <span className="text-xs font-mono text-muted-foreground">
+                                    {step.step}
+                                </span>
+                            </div>
+                            <h3 className="text-lg font-semibold text-foreground mb-2">
+                                {step.title}
+                            </h3>
+                            <p className="text-sm text-muted-foreground mb-4 leading-relaxed">
+                                {step.description}
+                            </p>
+                            <code className="text-xs font-mono text-primary/80 bg-primary/5 px-2 py-1 rounded">
+                                {step.code}
+                            </code>
+                        </Card>
                     ))}
                 </div>
             </div>

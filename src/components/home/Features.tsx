@@ -1,74 +1,90 @@
 import { Card } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Shield, BarChart3, Award, Leaf, Globe, Lock } from "lucide-react";
+import { 
+    Shield, 
+    GitBranch, 
+    Lock, 
+    FileCheck, 
+    Zap,
+    Database
+} from "lucide-react";
 
 const features = [
     {
         icon: Shield,
-        title: "Decentralized Ownership",
-        description: "True ownership backed by smart contracts and immutable blockchain records.",
-        badge: "Secure",
+        title: "Program-Level Security",
+        description: "Ownership checks, PDA validation, and arithmetic overflow protection at every instruction boundary.",
+        status: "Active",
     },
     {
-        icon: BarChart3,
-        title: "Transparent Yield Tracking",
-        description: "Real-time analytics and reporting on your agricultural investments.",
-        badge: "Analytics",
-    },
-    {
-        icon: Award,
-        title: "Asset Share Certificates",
-        description: "Unique digital certificates proving ownership of tokenized asset shares.",
-    },
-    {
-        icon: Leaf,
-        title: "Audit-Verified Yields",
-        description: "Support eco-friendly agricultural practices with measurable impact.",
-        badge: "Green",
-    },
-    {
-        icon: Globe,
-        title: "Global Marketplace",
-        description: "Access worldwide agricultural opportunities from a single platform.",
-        badge: "Worldwide",
+        icon: GitBranch,
+        title: "State Machine Invariants",
+        description: "Vaults progress through defined states with enforced transitions. No invalid state combinations possible.",
+        status: "Active",
     },
     {
         icon: Lock,
-        title: "Smart Contract Security",
-        description: "Audited contracts ensuring the safety of your investments.",
-        badge: "Audited",
+        title: "Authority Controls",
+        description: "Multi-signature governance with timelocked upgrades. Admin actions require explicit authorization.",
+        status: "Active",
+    },
+    {
+        icon: FileCheck,
+        title: "Audit-Ready Logs",
+        description: "Every deposit, withdrawal, and distribution emits structured events for off-chain indexing.",
+        status: "Active",
+    },
+    {
+        icon: Zap,
+        title: "High-Precision Math",
+        description: "BPS-based calculations with documented rounding behavior. No hidden fee extraction or precision loss.",
+        status: "Active",
+    },
+    {
+        icon: Database,
+        title: "Composable Accounts",
+        description: "PDAs and token accounts follow predictable derivation paths. Easy integration with other protocols.",
+        status: "Active",
     },
 ];
 
 const Features = () => {
     return (
-        <section id="features" className="py-16 md:py-24">
+        <section id="features" className="py-20">
             <div className="container mx-auto px-4">
-                <div className="text-center mb-12 md:mb-16">
-                    <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold mb-4">Platform Features</h2>
-                    <p className="text-lg md:text-xl text-muted-foreground max-w-2xl mx-auto px-4">
-                        Everything you need to invest in the future of agriculture
+                <div className="max-w-2xl mb-12">
+                    <h2 className="text-3xl font-bold text-foreground mb-4">
+                        Technical Specifications
+                    </h2>
+                    <p className="text-muted-foreground">
+                        Enterprise-grade security patterns and institutional compliance requirements.
                     </p>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6 max-w-7xl mx-auto">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     {features.map((feature, index) => (
                         <Card
                             key={index}
-                            className="p-6 bg-gradient-card border-border hover:border-primary/40 transition-all duration-300 hover:-translate-y-1 group"
+                            className="p-5 bg-card border-border hover:border-primary/30 transition-colors"
                         >
                             <div className="flex items-start gap-4">
-                                <div className="w-12 h-12 rounded-lg bg-primary/20 flex items-center justify-center flex-shrink-0 group-hover:bg-primary/30 transition-colors">
-                                    <feature.icon className="w-6 h-6 text-primary" />
+                                <div className="w-10 h-10 rounded bg-primary/10 flex items-center justify-center flex-shrink-0">
+                                    <feature.icon className="w-5 h-5 text-primary" />
                                 </div>
-                                <div className="flex-1">
-                                    <div className="flex items-center justify-between mb-3">
-                                        <h3 className="text-xl font-bold text-foreground">{feature.title}</h3>
-                                        <Badge variant="outline" className="border-primary/30 text-primary">
-                                            {feature.badge}
-                                        </Badge>
+                                <div className="flex-1 min-w-0">
+                                    <div className="flex items-center justify-between gap-2 mb-2">
+                                        <h3 className="text-base font-semibold text-foreground truncate">
+                                            {feature.title}
+                                        </h3>
+                                        <span className="flex items-center gap-1.5 flex-shrink-0">
+                                            <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+                                            <span className="text-xs text-muted-foreground">
+                                                {feature.status}
+                                            </span>
+                                        </span>
                                     </div>
-                                    <p className="text-muted-foreground text-sm">{feature.description}</p>
+                                    <p className="text-sm text-muted-foreground leading-relaxed">
+                                        {feature.description}
+                                    </p>
                                 </div>
                             </div>
                         </Card>

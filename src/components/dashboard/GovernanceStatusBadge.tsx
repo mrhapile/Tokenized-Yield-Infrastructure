@@ -67,7 +67,7 @@ export function GovernanceStatusBadge({
         
         setAuthority(authorityPubkey.toBase58());
         setState(authorityPubkey.equals(PublicKey.default) ? "immutable" : "active");
-      } catch (err) {
+      } catch {
         setState("error");
       }
     }

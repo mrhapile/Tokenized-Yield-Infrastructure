@@ -52,7 +52,7 @@ export function ProtocolOverview({ programId, vaultPda, className }: ProtocolOve
 
         // Parse vault state (simplified - in production use Anchor deserialization)
         // This is a placeholder for actual account parsing
-        const data = accountInfo.data;
+        // In production, decode accountInfo.data using Anchor IDL
         
         // For demo purposes, we'll show loading state
         // Real implementation would decode the account data using Anchor IDL
@@ -67,8 +67,8 @@ export function ProtocolOverview({ programId, vaultPda, className }: ProtocolOve
           sharesRedeemed: "0",
           name: "Tokenized Yield Vault",
         });
-      } catch (err: any) {
-        setError(err.message);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Unknown error");
       } finally {
         setLoading(false);
       }

@@ -1,76 +1,54 @@
-import { Sprout, Github, X, UserRoundSearch } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Github, ExternalLink } from "lucide-react";
 
 const Footer = () => {
     const footerLinks = {
-        Product: [
-            { label: "Features", href: "#features" },
-            { label: "Tokenization", href: "#" },
-            { label: "Marketplace", href: "#" },
-            { label: "Staking", href: "#" },
+        Protocol: [
+            { label: "Documentation", href: "https://github.com/abhyuday911/Anchor_farm-tokenization_cyberpunk", external: true },
+            { label: "GitHub", href: "https://github.com/abhyuday911/Anchor_farm-tokenization_cyberpunk", external: true },
+            { label: "Program ID", href: "https://explorer.solana.com/address/HZFSmaksGBkhV1eFUbvnAmEj99yT5sKTcDQSMDfs9A3j?cluster=devnet", external: true },
+        ],
+        Network: [
+            { label: "Solana Devnet", href: "https://explorer.solana.com/?cluster=devnet", external: true },
+            { label: "RPC Status", href: "https://status.solana.com/", external: true },
         ],
         Resources: [
-            { label: "Documentation", href: "#" },
-            { label: "Whitepaper", href: "#" },
-            { label: "Blog", href: "#" },
-            { label: "Support", href: "#" },
-        ],
-        Company: [
-            { label: "About Us", href: "#" },
-            { label: "Careers", href: "#" },
-            { label: "Press Kit", href: "#" },
-            { label: "Contact", href: "#" },
-        ],
-        Legal: [
-            { label: "Terms of Service", href: "#" },
-            { label: "Privacy Policy", href: "#" },
-            { label: "Cookie Policy", href: "#" },
+            { label: "Anchor Framework", href: "https://www.anchor-lang.com/", external: true },
+            { label: "Solana Docs", href: "https://solana.com/docs", external: true },
         ],
     };
 
-    const socialLinks = [
-        { name: "Twitter/X", icon: X, url: "https://x.com/rust2045", color: "hover:text-[#1DA1F2]" },
-        { name: "GitHub", icon: Github, url: "https://github.com/abhyuday911", color: "hover:text-foreground" },
-        { name: "Discord", icon: UserRoundSearch, url: "https://www.abhyuday.dev/", color: "hover:text-[#5865F2]" },
-    ];
-
     return (
-        <footer className="bg-secondary/25 border-t border-border">
-            <div className="container mx-auto px-4 py-12 md:py-10 md:pb-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-8 lg:gap-12 mb-8">
-                    <div className="sm:col-span-2 lg:col-span-2">
-                        <div className="flex items-center gap-2 mb-6">
-                            <div className="w-12 h-12 rounded-lg bg-gradient-hero flex items-center justify-center">
-                                <Sprout className="w-7 h-7 text-primary-foreground" />
+        <footer className="border-t border-border bg-background">
+            <div className="container mx-auto px-4 py-12">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
+                    {/* Brand */}
+                    <div className="col-span-2 md:col-span-1">
+                        <div className="flex items-center gap-2 mb-4">
+                            <div className="w-8 h-8 rounded bg-primary flex items-center justify-center">
+                                <span className="text-primary-foreground font-bold text-sm">YI</span>
                             </div>
-                            <span className="text-2xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+                            <span className="text-sm font-semibold text-foreground">
                                 Yield Infrastructure
                             </span>
                         </div>
-                        <p className="text-muted-foreground mb-6 max-w-sm">
-                            On-Chain Share Issuance & Revenue Distribution Engine.
-                            Tokenize ownership, automate dividends, and audit flows.
+                        <p className="text-sm text-muted-foreground leading-relaxed mb-4">
+                            On-chain share issuance and revenue distribution protocol.
                         </p>
-
-                        <div className="space-y-3">
-                            <h4 className="font-semibold text-foreground">Stay Updated</h4>
-                            <div className="flex flex-col sm:flex-row gap-2">
-                                <Input
-                                    type="email"
-                                    placeholder="Enter your email"
-                                    className="bg-background border-border flex-1"
-                                />
-                                <Button className="bg-gradient-hero text-primary-foreground hover:opacity-90 flex-shrink-0">
-                                    Subscribe
-                                </Button>
-                            </div>
-                        </div>
+                        <a 
+                            href="https://github.com/abhyuday911/Anchor_farm-tokenization_cyberpunk"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                        >
+                            <Github className="w-4 h-4" />
+                            View on GitHub
+                        </a>
                     </div>
 
+                    {/* Links */}
                     {Object.entries(footerLinks).map(([category, links]) => (
                         <div key={category}>
-                            <h3 className="font-bold mb-4 text-foreground text-sm uppercase tracking-wider last:bg-amber-400">
+                            <h3 className="text-xs font-semibold text-foreground uppercase tracking-wider mb-4">
                                 {category}
                             </h3>
                             <ul className="space-y-3">
@@ -78,9 +56,12 @@ const Footer = () => {
                                     <li key={link.label}>
                                         <a
                                             href={link.href}
-                                            className="text-sm text-muted-foreground hover:text-primary transition-colors inline-block"
+                                            target={link.external ? "_blank" : undefined}
+                                            rel={link.external ? "noopener noreferrer" : undefined}
+                                            className="text-sm text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-1"
                                         >
                                             {link.label}
+                                            {link.external && <ExternalLink className="w-3 h-3" />}
                                         </a>
                                     </li>
                                 ))}
@@ -89,23 +70,20 @@ const Footer = () => {
                     ))}
                 </div>
 
-                <div className="pt-4 border-t border-border">
-                    <div className="flex flex-col md:flex-row justify-between items-center gap-6">
-                        <p className="text-sm text-muted-foreground text-center md:text-left">
-                            © 2025 Tokenized Yield Infrastructure. All rights reserved. Built with blockchain technology for transparent finance.
+                {/* Bottom */}
+                <div className="mt-12 pt-6 border-t border-border">
+                    <div className="flex flex-col md:flex-row justify-between items-center gap-4">
+                        <p className="text-xs text-muted-foreground">
+                            © {new Date().getFullYear()} Tokenized Yield Infrastructure. Open source under MIT license.
                         </p>
-
-                        <div className="flex items-center gap-3">
-                            {socialLinks.map((social) => (
-                                <a
-                                    key={social.name}
-                                    href={social.url}
-                                    className={`w-10 h-10 rounded-full bg-secondary border border-border flex items-center justify-center text-muted-foreground transition-all hover:border-primary ${social.color}`}
-                                    aria-label={social.name}
-                                >
-                                    <social.icon className="w-5 h-5" />
-                                </a>
-                            ))}
+                        <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                            <span className="flex items-center gap-1.5">
+                                <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+                                Devnet
+                            </span>
+                            <span className="font-mono">
+                                v0.1.0
+                            </span>
                         </div>
                     </div>
                 </div>

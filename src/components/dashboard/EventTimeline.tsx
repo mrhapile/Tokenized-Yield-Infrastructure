@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useConnection } from "@solana/wallet-adapter-react";
-import { PublicKey, ParsedTransactionWithMeta, ConfirmedSignatureInfo } from "@solana/web3.js";
+import { PublicKey } from "@solana/web3.js";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { 
@@ -69,8 +69,8 @@ export function EventTimeline({
       }));
 
       setEvents(eventList);
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
       setLoading(false);
     }
@@ -213,7 +213,7 @@ export function EventTimeline({
               
               {/* Events */}
               <div className="space-y-3">
-                {filteredEvents.map((event, index) => (
+                {filteredEvents.map((event) => (
                   <div 
                     key={event.signature}
                     className="relative flex gap-3 pl-1"

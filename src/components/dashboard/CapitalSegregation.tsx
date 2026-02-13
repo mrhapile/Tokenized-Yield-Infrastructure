@@ -2,10 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { useConnection } from "@solana/wallet-adapter-react";
-import { PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js";
+import { PublicKey } from "@solana/web3.js";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { AlertTriangle, CheckCircle2, TrendingUp, Wallet, PiggyBank, Landmark } from "lucide-react";
+import { AlertTriangle, CheckCircle2, TrendingUp, Wallet, Landmark } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Progress } from "@/components/ui/progress";
 
@@ -42,6 +42,8 @@ interface CapitalSegregationProps {
 }
 
 export function CapitalSegregation({
+  // vaultPda is passed but not directly used - kept for API consistency
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   vaultPda,
   principalVaultPda,
   revenueVaultPda,
@@ -104,8 +106,8 @@ export function CapitalSegregation({
           isSolvent: solvencyRatio >= 100,
         });
 
-      } catch (err: any) {
-        setError(err.message);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Unknown error");
       } finally {
         setLoading(false);
       }
