@@ -26,6 +26,7 @@ describe("Tokenized Yield Lifecycle", () => {
   let vaultShareMintPda: PublicKey;
   let principalVaultPda: PublicKey;
   let revenueVaultPda: PublicKey;
+  let treasuryPda: PublicKey;
   let paymentMint: PublicKey;
 
   let buyer: anchor.web3.Keypair;
@@ -54,6 +55,12 @@ describe("Tokenized Yield Lifecycle", () => {
 
     [revenueVaultPda] = PublicKey.findProgramAddressSync(
       [Buffer.from("revenue-vault"), vaultPda.toBuffer()],
+      program.programId
+    );
+
+    // Treasury PDA for performance fees
+    [treasuryPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("treasury"), vaultPda.toBuffer()],
       program.programId
     );
 
@@ -90,7 +97,7 @@ describe("Tokenized Yield Lifecycle", () => {
 
   it("initializes the Vault", async () => {
     await program.methods
-      .initializeVault("Ramesh Vault", new anchor.BN(10_000_000_000), new anchor.BN(100))
+      .initializeVault("Ramesh Vault", new anchor.BN(10_000_000_000), new anchor.BN(100), 1000) // 10% fee
       .accounts({
         owner: vaultOwnerPubKey,
         vault: vaultPda,
@@ -98,6 +105,7 @@ describe("Tokenized Yield Lifecycle", () => {
         paymentMint,
         principalVault: principalVaultPda,
         revenueVault: revenueVaultPda,
+        treasury: treasuryPda,
         vaultShareMint: vaultShareMintPda,
         associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
         tokenProgram: TOKEN_PROGRAM_ID,
@@ -115,6 +123,9 @@ describe("Tokenized Yield Lifecycle", () => {
     // I should fix the test to match the logic.
     expect(vaultAccount.totalShares.toString()).toBe("10000000000");
     expect(vaultAccount.pricePerShare.toNumber()).toBe(100);
+    expect(vaultAccount.performanceFeeBps).toBe(1000); // 10%
+    expect(vaultAccount.treasury.toString()).toBe(treasuryPda.toString());
+    expect(vaultAccount.totalFeesCollected.toNumber()).toBe(0);
   });
 
   it("mints shares", async () => {
@@ -318,7 +329,7 @@ describe("Tokenized Yield Lifecycle", () => {
 
     await program.methods.depositRevenue(new anchor.BN(10_000)).accounts({
       vault: vaultPda, payer: (payer as anchor.Wallet).publicKey, payerAta: buyerPaymentAta,
-      revenueVault: revenueVaultPda, vaultSigner: vaultSignerPda, tokenProgram: TOKEN_PROGRAM_ID,
+      revenueVault: revenueVaultPda, treasury: treasuryPda, vaultSigner: vaultSignerPda, tokenProgram: TOKEN_PROGRAM_ID,
     }).signers([(payer as anchor.Wallet).payer]).rpc();
 
     const initialBalance = (await provider.connection.getTokenAccountBalance(userPaymentAta)).value.amount;
@@ -335,7 +346,7 @@ describe("Tokenized Yield Lifecycle", () => {
     await mintTo(provider.connection, (payer as anchor.Wallet).payer, paymentMint, buyerPaymentAta, vaultOwnerPubKey, 10_000_000_000_000_000_000);
     await program.methods.depositRevenue(hugeRevenue).accounts({
       vault: vaultPda, payer: (payer as anchor.Wallet).publicKey, payerAta: buyerPaymentAta,
-      revenueVault: revenueVaultPda, vaultSigner: vaultSignerPda, tokenProgram: TOKEN_PROGRAM_ID,
+      revenueVault: revenueVaultPda, treasury: treasuryPda, vaultSigner: vaultSignerPda, tokenProgram: TOKEN_PROGRAM_ID,
     }).signers([(payer as anchor.Wallet).payer]).rpc();
   });
 
@@ -403,7 +414,7 @@ describe("Tokenized Yield Lifecycle", () => {
 
       await program.methods.depositRevenue(new anchor.BN(1000)).accounts({
         vault: vaultPda, payer: (payer as anchor.Wallet).publicKey, payerAta: buyerPaymentAta,
-        revenueVault: revenueVaultPda, vaultSigner: vaultSignerPda, tokenProgram: TOKEN_PROGRAM_ID,
+        revenueVault: revenueVaultPda, treasury: treasuryPda, vaultSigner: vaultSignerPda, tokenProgram: TOKEN_PROGRAM_ID,
       }).signers([(payer as anchor.Wallet).payer]).rpc();
 
       await provider.connection.confirmTransaction(await provider.connection.requestAirdrop(userB.publicKey, 1e9));
@@ -456,7 +467,7 @@ describe("Tokenized Yield Lifecycle", () => {
       for (let i = 0; i < 5; i++) {
         await program.methods.depositRevenue(new anchor.BN(1)).accounts({
           vault: vaultPda, payer: (payer as anchor.Wallet).publicKey, payerAta: buyerPaymentAta,
-          revenueVault: revenueVaultPda, vaultSigner: vaultSignerPda, tokenProgram: TOKEN_PROGRAM_ID,
+          revenueVault: revenueVaultPda, treasury: treasuryPda, vaultSigner: vaultSignerPda, tokenProgram: TOKEN_PROGRAM_ID,
         }).signers([(payer as anchor.Wallet).payer]).rpc();
       }
       await assertFullInvariant();
@@ -484,6 +495,596 @@ describe("Tokenized Yield Lifecycle", () => {
       }
       expect((await program.account.userStake.fetch(shareholderPda)).quantity.toNumber()).toBe(0);
       await assertFullInvariant();
+    });
+  });
+});
+
+// =============================================================================
+// PERFORMANCE FEE LAYER TESTS
+// =============================================================================
+describe("Performance Fee Layer", () => {
+  const provider = anchor.AnchorProvider.env();
+  anchor.setProvider(provider);
+  const program = anchor.workspace.TokenizedYieldInfrastructure as Program<TokenizedYieldInfrastructure>;
+
+  const payer = provider.wallet;
+
+  describe("Fee Calculation & Distribution", () => {
+    let feeVaultPda: PublicKey;
+    let feeVaultSignerPda: PublicKey;
+    let feeVaultShareMintPda: PublicKey;
+    let feePrincipalVaultPda: PublicKey;
+    let feeRevenueVaultPda: PublicKey;
+    let feeTreasuryPda: PublicKey;
+    let feePaymentMint: PublicKey;
+    let feeOwner: anchor.web3.Keypair;
+    let shareholder: anchor.web3.Keypair;
+    let shareholderPaymentAta: PublicKey;
+    let depositorPaymentAta: PublicKey;
+
+    beforeAll(async () => {
+      feeOwner = anchor.web3.Keypair.generate();
+      await provider.connection.confirmTransaction(
+        await provider.connection.requestAirdrop(feeOwner.publicKey, 5e9)
+      );
+
+      [feeVaultPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("vault"), feeOwner.publicKey.toBuffer()],
+        program.programId
+      );
+
+      [feeVaultSignerPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("vault_signer"), feeVaultPda.toBuffer()],
+        program.programId
+      );
+
+      [feeVaultShareMintPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("vault_share_mint"), feeVaultPda.toBuffer()],
+        program.programId
+      );
+
+      [feePrincipalVaultPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("principal-vault"), feeVaultPda.toBuffer()],
+        program.programId
+      );
+
+      [feeRevenueVaultPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("revenue-vault"), feeVaultPda.toBuffer()],
+        program.programId
+      );
+
+      [feeTreasuryPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("treasury"), feeVaultPda.toBuffer()],
+        program.programId
+      );
+
+      feePaymentMint = await createMint(
+        provider.connection,
+        (payer as anchor.Wallet).payer,
+        (payer as anchor.Wallet).publicKey,
+        null,
+        6
+      );
+
+      shareholder = anchor.web3.Keypair.generate();
+      await provider.connection.confirmTransaction(
+        await provider.connection.requestAirdrop(shareholder.publicKey, 2e9)
+      );
+
+      shareholderPaymentAta = await createAccount(
+        provider.connection,
+        (payer as anchor.Wallet).payer,
+        feePaymentMint,
+        shareholder.publicKey
+      );
+
+      depositorPaymentAta = await createAccount(
+        provider.connection,
+        (payer as anchor.Wallet).payer,
+        feePaymentMint,
+        (payer as anchor.Wallet).publicKey
+      );
+
+      await mintTo(
+        provider.connection,
+        (payer as anchor.Wallet).payer,
+        feePaymentMint,
+        shareholderPaymentAta,
+        (payer as anchor.Wallet).publicKey,
+        100_000_000
+      );
+
+      await mintTo(
+        provider.connection,
+        (payer as anchor.Wallet).payer,
+        feePaymentMint,
+        depositorPaymentAta,
+        (payer as anchor.Wallet).publicKey,
+        100_000_000
+      );
+    });
+
+    it("FEE-1: Revenue deposit with 10% fee - treasury receives exact fee", async () => {
+      // Initialize vault with 10% fee (1000 bps)
+      await program.methods
+        .initializeVault("Fee Test Vault", new anchor.BN(1_000_000), new anchor.BN(100), 1000)
+        .accounts({
+          owner: feeOwner.publicKey,
+          vault: feeVaultPda,
+          vaultSigner: feeVaultSignerPda,
+          paymentMint: feePaymentMint,
+          principalVault: feePrincipalVaultPda,
+          revenueVault: feeRevenueVaultPda,
+          treasury: feeTreasuryPda,
+          vaultShareMint: feeVaultShareMintPda,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        })
+        .signers([feeOwner])
+        .rpc();
+
+      // Mint shares to shareholder
+      const [shareholderPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("shareholder"), feeVaultPda.toBuffer(), shareholder.publicKey.toBuffer()],
+        program.programId
+      );
+      const shareholderShareAta = await anchor.utils.token.associatedAddress({
+        mint: feeVaultShareMintPda,
+        owner: shareholder.publicKey
+      });
+
+      await program.methods
+        .mintShares(new anchor.BN(1000))
+        .accounts({
+          vault: feeVaultPda,
+          vaultSigner: feeVaultSignerPda,
+          payer: shareholder.publicKey,
+          payerAta: shareholderPaymentAta,
+          principalVault: feePrincipalVaultPda,
+          revenueVault: feeRevenueVaultPda,
+          vaultShareMint: feeVaultShareMintPda,
+          shareholder: shareholderPda,
+          investorShareAta: shareholderShareAta,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([shareholder])
+        .rpc();
+
+      // Record balances before deposit
+      const treasuryBalanceBefore = (await provider.connection.getTokenAccountBalance(feeTreasuryPda)).value.amount;
+      const revenueVaultBalanceBefore = (await provider.connection.getTokenAccountBalance(feeRevenueVaultPda)).value.amount;
+
+      // Deposit 10,000 revenue (should split: 1,000 fee, 9,000 distributable)
+      const revenueAmount = new anchor.BN(10_000);
+      await program.methods
+        .depositRevenue(revenueAmount)
+        .accounts({
+          vault: feeVaultPda,
+          payer: (payer as anchor.Wallet).publicKey,
+          payerAta: depositorPaymentAta,
+          revenueVault: feeRevenueVaultPda,
+          treasury: feeTreasuryPda,
+          vaultSigner: feeVaultSignerPda,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([(payer as anchor.Wallet).payer])
+        .rpc();
+
+      // Verify treasury received exactly 10% fee
+      const treasuryBalanceAfter = (await provider.connection.getTokenAccountBalance(feeTreasuryPda)).value.amount;
+      const expectedFee = 1000; // 10% of 10,000
+      expect(new anchor.BN(treasuryBalanceAfter).sub(new anchor.BN(treasuryBalanceBefore)).toNumber()).toBe(expectedFee);
+
+      // Verify revenue vault received exactly 90% distributable
+      const revenueVaultBalanceAfter = (await provider.connection.getTokenAccountBalance(feeRevenueVaultPda)).value.amount;
+      const expectedDistributable = 9000; // 90% of 10,000
+      expect(new anchor.BN(revenueVaultBalanceAfter).sub(new anchor.BN(revenueVaultBalanceBefore)).toNumber()).toBe(expectedDistributable);
+
+      // Verify vault state tracks fees
+      const vaultAccount = await program.account.vault.fetch(feeVaultPda);
+      expect(vaultAccount.totalFeesCollected.toNumber()).toBe(expectedFee);
+    });
+
+    it("FEE-2: Shareholder receives exact remaining portion after fee", async () => {
+      const [shareholderPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("shareholder"), feeVaultPda.toBuffer(), shareholder.publicKey.toBuffer()],
+        program.programId
+      );
+
+      // Record shareholder balance before harvest
+      const shareholderBalanceBefore = (await provider.connection.getTokenAccountBalance(shareholderPaymentAta)).value.amount;
+
+      // Harvest rewards
+      await program.methods
+        .harvest()
+        .accounts({
+          vault: feeVaultPda,
+          vaultSigner: feeVaultSignerPda,
+          payer: shareholder.publicKey,
+          shareholder: shareholderPda,
+          revenueVault: feeRevenueVaultPda,
+          userAta: shareholderPaymentAta,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([shareholder])
+        .rpc();
+
+      // Shareholder should receive the distributable amount (9,000)
+      const shareholderBalanceAfter = (await provider.connection.getTokenAccountBalance(shareholderPaymentAta)).value.amount;
+      const received = new anchor.BN(shareholderBalanceAfter).sub(new anchor.BN(shareholderBalanceBefore)).toNumber();
+      
+      // The shareholder owns 100% of shares, so they get 100% of distributable (9,000)
+      expect(received).toBe(9000);
+    });
+
+    it("FEE-3: Multiple revenue deposits accumulate fees correctly", async () => {
+      const vaultBefore = await program.account.vault.fetch(feeVaultPda);
+      const totalFeesBefore = vaultBefore.totalFeesCollected.toNumber();
+      const treasuryBefore = (await provider.connection.getTokenAccountBalance(feeTreasuryPda)).value.amount;
+
+      // Deposit 5,000 more (should add 500 fee)
+      await program.methods
+        .depositRevenue(new anchor.BN(5000))
+        .accounts({
+          vault: feeVaultPda,
+          payer: (payer as anchor.Wallet).publicKey,
+          payerAta: depositorPaymentAta,
+          revenueVault: feeRevenueVaultPda,
+          treasury: feeTreasuryPda,
+          vaultSigner: feeVaultSignerPda,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([(payer as anchor.Wallet).payer])
+        .rpc();
+
+      const vaultAfter = await program.account.vault.fetch(feeVaultPda);
+      const treasuryAfter = (await provider.connection.getTokenAccountBalance(feeTreasuryPda)).value.amount;
+
+      // Verify cumulative fee tracking
+      expect(vaultAfter.totalFeesCollected.toNumber()).toBe(totalFeesBefore + 500);
+      expect(new anchor.BN(treasuryAfter).sub(new anchor.BN(treasuryBefore)).toNumber()).toBe(500);
+    });
+  });
+
+  describe("Zero Fee Vault", () => {
+    let zeroFeeVaultPda: PublicKey;
+    let zeroFeeVaultSignerPda: PublicKey;
+    let zeroFeeVaultShareMintPda: PublicKey;
+    let zeroFeePrincipalVaultPda: PublicKey;
+    let zeroFeeRevenueVaultPda: PublicKey;
+    let zeroFeeTreasuryPda: PublicKey;
+    let zeroFeePaymentMint: PublicKey;
+    let zeroFeeOwner: anchor.web3.Keypair;
+    let zeroFeeShareholder: anchor.web3.Keypair;
+    let zeroFeeShareholderPaymentAta: PublicKey;
+    let zeroFeeDepositorPaymentAta: PublicKey;
+
+    beforeAll(async () => {
+      zeroFeeOwner = anchor.web3.Keypair.generate();
+      await provider.connection.confirmTransaction(
+        await provider.connection.requestAirdrop(zeroFeeOwner.publicKey, 5e9)
+      );
+
+      [zeroFeeVaultPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("vault"), zeroFeeOwner.publicKey.toBuffer()],
+        program.programId
+      );
+
+      [zeroFeeVaultSignerPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("vault_signer"), zeroFeeVaultPda.toBuffer()],
+        program.programId
+      );
+
+      [zeroFeeVaultShareMintPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("vault_share_mint"), zeroFeeVaultPda.toBuffer()],
+        program.programId
+      );
+
+      [zeroFeePrincipalVaultPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("principal-vault"), zeroFeeVaultPda.toBuffer()],
+        program.programId
+      );
+
+      [zeroFeeRevenueVaultPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("revenue-vault"), zeroFeeVaultPda.toBuffer()],
+        program.programId
+      );
+
+      [zeroFeeTreasuryPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("treasury"), zeroFeeVaultPda.toBuffer()],
+        program.programId
+      );
+
+      zeroFeePaymentMint = await createMint(
+        provider.connection,
+        (payer as anchor.Wallet).payer,
+        (payer as anchor.Wallet).publicKey,
+        null,
+        6
+      );
+
+      zeroFeeShareholder = anchor.web3.Keypair.generate();
+      await provider.connection.confirmTransaction(
+        await provider.connection.requestAirdrop(zeroFeeShareholder.publicKey, 2e9)
+      );
+
+      zeroFeeShareholderPaymentAta = await createAccount(
+        provider.connection,
+        (payer as anchor.Wallet).payer,
+        zeroFeePaymentMint,
+        zeroFeeShareholder.publicKey
+      );
+
+      zeroFeeDepositorPaymentAta = await createAccount(
+        provider.connection,
+        (payer as anchor.Wallet).payer,
+        zeroFeePaymentMint,
+        (payer as anchor.Wallet).publicKey
+      );
+
+      await mintTo(
+        provider.connection,
+        (payer as anchor.Wallet).payer,
+        zeroFeePaymentMint,
+        zeroFeeShareholderPaymentAta,
+        (payer as anchor.Wallet).publicKey,
+        100_000_000
+      );
+
+      await mintTo(
+        provider.connection,
+        (payer as anchor.Wallet).payer,
+        zeroFeePaymentMint,
+        zeroFeeDepositorPaymentAta,
+        (payer as anchor.Wallet).publicKey,
+        100_000_000
+      );
+    });
+
+    it("FEE-4: 0% fee works - full amount goes to shareholders", async () => {
+      // Initialize vault with 0% fee
+      await program.methods
+        .initializeVault("Zero Fee Vault", new anchor.BN(1_000_000), new anchor.BN(100), 0)
+        .accounts({
+          owner: zeroFeeOwner.publicKey,
+          vault: zeroFeeVaultPda,
+          vaultSigner: zeroFeeVaultSignerPda,
+          paymentMint: zeroFeePaymentMint,
+          principalVault: zeroFeePrincipalVaultPda,
+          revenueVault: zeroFeeRevenueVaultPda,
+          treasury: zeroFeeTreasuryPda,
+          vaultShareMint: zeroFeeVaultShareMintPda,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        })
+        .signers([zeroFeeOwner])
+        .rpc();
+
+      // Verify fee is 0
+      const vault = await program.account.vault.fetch(zeroFeeVaultPda);
+      expect(vault.performanceFeeBps).toBe(0);
+
+      // Mint shares
+      const [shareholderPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("shareholder"), zeroFeeVaultPda.toBuffer(), zeroFeeShareholder.publicKey.toBuffer()],
+        program.programId
+      );
+      const shareholderShareAta = await anchor.utils.token.associatedAddress({
+        mint: zeroFeeVaultShareMintPda,
+        owner: zeroFeeShareholder.publicKey
+      });
+
+      await program.methods
+        .mintShares(new anchor.BN(1000))
+        .accounts({
+          vault: zeroFeeVaultPda,
+          vaultSigner: zeroFeeVaultSignerPda,
+          payer: zeroFeeShareholder.publicKey,
+          payerAta: zeroFeeShareholderPaymentAta,
+          principalVault: zeroFeePrincipalVaultPda,
+          revenueVault: zeroFeeRevenueVaultPda,
+          vaultShareMint: zeroFeeVaultShareMintPda,
+          shareholder: shareholderPda,
+          investorShareAta: shareholderShareAta,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([zeroFeeShareholder])
+        .rpc();
+
+      // Record balances
+      const treasuryBefore = (await provider.connection.getTokenAccountBalance(zeroFeeTreasuryPda)).value.amount;
+      const revenueVaultBefore = (await provider.connection.getTokenAccountBalance(zeroFeeRevenueVaultPda)).value.amount;
+
+      // Deposit 10,000 revenue
+      await program.methods
+        .depositRevenue(new anchor.BN(10_000))
+        .accounts({
+          vault: zeroFeeVaultPda,
+          payer: (payer as anchor.Wallet).publicKey,
+          payerAta: zeroFeeDepositorPaymentAta,
+          revenueVault: zeroFeeRevenueVaultPda,
+          treasury: zeroFeeTreasuryPda,
+          vaultSigner: zeroFeeVaultSignerPda,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([(payer as anchor.Wallet).payer])
+        .rpc();
+
+      // Treasury should receive 0
+      const treasuryAfter = (await provider.connection.getTokenAccountBalance(zeroFeeTreasuryPda)).value.amount;
+      expect(new anchor.BN(treasuryAfter).sub(new anchor.BN(treasuryBefore)).toNumber()).toBe(0);
+
+      // Revenue vault should receive full amount
+      const revenueVaultAfter = (await provider.connection.getTokenAccountBalance(zeroFeeRevenueVaultPda)).value.amount;
+      expect(new anchor.BN(revenueVaultAfter).sub(new anchor.BN(revenueVaultBefore)).toNumber()).toBe(10_000);
+
+      // Verify no fees tracked
+      const vaultAfter = await program.account.vault.fetch(zeroFeeVaultPda);
+      expect(vaultAfter.totalFeesCollected.toNumber()).toBe(0);
+
+      // Harvest and verify shareholder gets full amount
+      const shareholderBefore = (await provider.connection.getTokenAccountBalance(zeroFeeShareholderPaymentAta)).value.amount;
+      
+      await program.methods
+        .harvest()
+        .accounts({
+          vault: zeroFeeVaultPda,
+          vaultSigner: zeroFeeVaultSignerPda,
+          payer: zeroFeeShareholder.publicKey,
+          shareholder: shareholderPda,
+          revenueVault: zeroFeeRevenueVaultPda,
+          userAta: zeroFeeShareholderPaymentAta,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([zeroFeeShareholder])
+        .rpc();
+
+      const shareholderAfter = (await provider.connection.getTokenAccountBalance(zeroFeeShareholderPaymentAta)).value.amount;
+      expect(new anchor.BN(shareholderAfter).sub(new anchor.BN(shareholderBefore)).toNumber()).toBe(10_000);
+    });
+  });
+
+  describe("Fee Boundedness", () => {
+    it("FEE-5: >20% fee fails at initialization", async () => {
+      const invalidFeeOwner = anchor.web3.Keypair.generate();
+      await provider.connection.confirmTransaction(
+        await provider.connection.requestAirdrop(invalidFeeOwner.publicKey, 2e9)
+      );
+
+      const [invalidVaultPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("vault"), invalidFeeOwner.publicKey.toBuffer()],
+        program.programId
+      );
+
+      const [invalidVaultSignerPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("vault_signer"), invalidVaultPda.toBuffer()],
+        program.programId
+      );
+
+      const [invalidVaultShareMintPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("vault_share_mint"), invalidVaultPda.toBuffer()],
+        program.programId
+      );
+
+      const [invalidPrincipalVaultPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("principal-vault"), invalidVaultPda.toBuffer()],
+        program.programId
+      );
+
+      const [invalidRevenueVaultPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("revenue-vault"), invalidVaultPda.toBuffer()],
+        program.programId
+      );
+
+      const [invalidTreasuryPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("treasury"), invalidVaultPda.toBuffer()],
+        program.programId
+      );
+
+      const invalidPaymentMint = await createMint(
+        provider.connection,
+        (payer as anchor.Wallet).payer,
+        (payer as anchor.Wallet).publicKey,
+        null,
+        6
+      );
+
+      // Try to initialize with 21% fee (2100 bps) - should fail
+      const tx = program.methods
+        .initializeVault("Invalid Fee Vault", new anchor.BN(1_000_000), new anchor.BN(100), 2100)
+        .accounts({
+          owner: invalidFeeOwner.publicKey,
+          vault: invalidVaultPda,
+          vaultSigner: invalidVaultSignerPda,
+          paymentMint: invalidPaymentMint,
+          principalVault: invalidPrincipalVaultPda,
+          revenueVault: invalidRevenueVaultPda,
+          treasury: invalidTreasuryPda,
+          vaultShareMint: invalidVaultShareMintPda,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        })
+        .signers([invalidFeeOwner]);
+
+      await expect(tx.rpc()).rejects.toThrow("PerformanceFeeExceedsMax");
+    });
+
+    it("FEE-6: Exactly 20% fee is allowed", async () => {
+      const maxFeeOwner = anchor.web3.Keypair.generate();
+      await provider.connection.confirmTransaction(
+        await provider.connection.requestAirdrop(maxFeeOwner.publicKey, 2e9)
+      );
+
+      const [maxFeeVaultPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("vault"), maxFeeOwner.publicKey.toBuffer()],
+        program.programId
+      );
+
+      const [maxFeeVaultSignerPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("vault_signer"), maxFeeVaultPda.toBuffer()],
+        program.programId
+      );
+
+      const [maxFeeVaultShareMintPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("vault_share_mint"), maxFeeVaultPda.toBuffer()],
+        program.programId
+      );
+
+      const [maxFeePrincipalVaultPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("principal-vault"), maxFeeVaultPda.toBuffer()],
+        program.programId
+      );
+
+      const [maxFeeRevenueVaultPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("revenue-vault"), maxFeeVaultPda.toBuffer()],
+        program.programId
+      );
+
+      const [maxFeeTreasuryPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("treasury"), maxFeeVaultPda.toBuffer()],
+        program.programId
+      );
+
+      const maxFeePaymentMint = await createMint(
+        provider.connection,
+        (payer as anchor.Wallet).payer,
+        (payer as anchor.Wallet).publicKey,
+        null,
+        6
+      );
+
+      // Initialize with exactly 20% fee (2000 bps) - should succeed
+      await program.methods
+        .initializeVault("Max Fee Vault", new anchor.BN(1_000_000), new anchor.BN(100), 2000)
+        .accounts({
+          owner: maxFeeOwner.publicKey,
+          vault: maxFeeVaultPda,
+          vaultSigner: maxFeeVaultSignerPda,
+          paymentMint: maxFeePaymentMint,
+          principalVault: maxFeePrincipalVaultPda,
+          revenueVault: maxFeeRevenueVaultPda,
+          treasury: maxFeeTreasuryPda,
+          vaultShareMint: maxFeeVaultShareMintPda,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        })
+        .signers([maxFeeOwner])
+        .rpc();
+
+      const vault = await program.account.vault.fetch(maxFeeVaultPda);
+      expect(vault.performanceFeeBps).toBe(2000);
     });
   });
 });

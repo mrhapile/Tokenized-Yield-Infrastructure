@@ -174,5 +174,93 @@ $$ \text{revenue\_vault.amount} \ge \sum(\text{unclaimed\_rewards}) $$
 - `harvest` and `redeem_shares` (reward portion) withdraw only from `revenue_vault`.
 - Prevents cross-contamination where rewards could theoretically be paid out of user principal if the yield logic failed.
 
+---
+
+## 15. Performance Fee Layer Invariants
+
+The protocol implements a deterministic performance fee mechanism that extracts protocol revenue from deposited yield before shareholder distribution.
+
+### 15.1 Protocol Revenue Invariant
+
+The treasury balance must exactly equal the sum of all performance fees collected across all revenue deposits.
+
+$$
+\text{treasury\_balance} = \sum_{i}(\text{performance\_fee}_i) = \text{vault.total\_fees\_collected}
+$$
+
+**Enforcement:**
+- Every `deposit_revenue` call computes `performance_fee = revenue * fee_bps / 10_000`.
+- Performance fee is transferred to treasury PDA *before* distributable amount processing.
+- `vault.total_fees_collected` is atomically incremented on each fee collection.
+- Treasury PDA is validated against `vault.treasury` to prevent fund redirection.
+
+### 15.2 Fee Boundedness Invariant
+
+The performance fee basis points must never exceed the maximum allowed fee rate (20%).
+
+$$
+\text{performance\_fee\_bps} \le 2000
+$$
+
+**Enforcement:**
+- `initialize_vault` explicitly validates `performance_fee_bps <= MAX_PERFORMANCE_FEE_BPS`.
+- Constant `MAX_PERFORMANCE_FEE_BPS = 2000` is defined in vault state.
+- `PerformanceFeeExceedsMax` error is thrown on violation.
+
+### 15.3 Fee Decomposition Invariant
+
+For every revenue deposit, the input amount must exactly decompose into performance fee and distributable amount with no loss.
+
+$$
+\text{revenue\_amount} = \text{performance\_fee} + \text{distributable\_amount}
+$$
+
+Where:
+$$
+\text{performance\_fee} = \lfloor \frac{\text{revenue} \times \text{fee\_bps}}{10000} \rfloor
+$$
+$$
+\text{distributable\_amount} = \text{revenue} - \text{performance\_fee}
+$$
+
+**Enforcement:**
+- Integer division truncation ensures deterministic fee calculation.
+- Checked arithmetic prevents overflow/underflow.
+- Distributable amount is computed via subtraction from original amount.
+
+### 15.4 Accumulator Isolation Invariant
+
+The reward accumulator `acc_reward_per_share` must only be updated using the distributable amount, never the gross revenue.
+
+$$
+\Delta \text{acc\_reward\_per\_share} = \frac{\text{distributable\_amount} \times \text{PRECISION}}{\text{minted\_shares}}
+$$
+
+**Enforcement:**
+- Performance fee is transferred and deducted *before* accumulator math.
+- Accumulator update code receives `distributable_amount` variable only.
+- Existing precision math and remainder tracking are applied to net amount.
+
+### 15.5 Zero Fee Passthrough Invariant
+
+When `performance_fee_bps = 0`, the entire revenue amount must flow to shareholders.
+
+$$
+\text{if } \text{fee\_bps} = 0 \Rightarrow \text{distributable\_amount} = \text{revenue\_amount}
+$$
+
+**Enforcement:**
+- Fee calculation correctly yields 0 when `fee_bps = 0`.
+- Treasury transfer is skipped when `performance_fee = 0`.
+- Full amount proceeds to revenue vault and accumulator update.
+
+### Treasury PDA Definition
+
+```
+Seeds: [b"treasury", vault.key().as_ref()]
+Authority: vault_signer PDA
+Mint: payment_mint (same as principal/revenue vaults)
+```
+
 
 

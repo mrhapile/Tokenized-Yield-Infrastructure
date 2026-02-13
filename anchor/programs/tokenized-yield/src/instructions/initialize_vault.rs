@@ -5,6 +5,8 @@ use anchor_spl::{
 };
 
 pub use crate::states::Vault;
+use crate::states::vault::MAX_PERFORMANCE_FEE_BPS;
+use crate::error::ErrorCode;
 
 #[derive(Accounts)]
 pub struct InitializeVault<'info> {
@@ -63,6 +65,17 @@ pub struct InitializeVault<'info> {
     )]
     pub revenue_vault: Account<'info, TokenAccount>,
 
+    /// Treasury PDA token account that receives performance fees
+    #[account(
+        init,
+        token::mint = payment_mint,
+        token::authority = vault_signer,
+        seeds = [b"treasury", vault.key().as_ref()],
+        bump,
+        payer = owner
+    )]
+    pub treasury: Account<'info, TokenAccount>,
+
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
@@ -74,7 +87,14 @@ pub fn process_initialize_vault(
     name: String,
     total_shares: u64,
     price_per_share: u64,
+    performance_fee_bps: u16,
 ) -> Result<()> {
+    // Validate fee boundedness (max 20%)
+    require!(
+        performance_fee_bps <= MAX_PERFORMANCE_FEE_BPS,
+        ErrorCode::PerformanceFeeExceedsMax
+    );
+
     let vault = &mut ctx.accounts.vault;
     vault.owner = *ctx.accounts.owner.key;
     vault.name = name;
@@ -90,6 +110,12 @@ pub fn process_initialize_vault(
 
     vault.acc_reward_per_share = 0;
     vault.reward_remainder = 0;
+
+    // Performance Fee Layer initialization
+    vault.performance_fee_bps = performance_fee_bps;
+    vault.treasury = ctx.accounts.treasury.key();
+    vault.total_fees_collected = 0;
+
     vault.bump = ctx.bumps.vault;
     vault.signer_bump = ctx.bumps.vault_signer;
 

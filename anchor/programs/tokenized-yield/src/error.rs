@@ -46,4 +46,11 @@ pub enum ErrorCode {
 
     #[msg("Insufficient shares for redemption")]
     InsufficientShares,
+
+    // Performance Fee Layer Errors
+    #[msg("Performance fee exceeds maximum of 20% (2000 bps)")]
+    PerformanceFeeExceedsMax,
+
+    #[msg("Invalid treasury account")]
+    InvalidTreasury,
 }

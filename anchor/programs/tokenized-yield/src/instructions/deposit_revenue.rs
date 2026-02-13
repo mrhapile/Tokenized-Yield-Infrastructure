@@ -1,6 +1,7 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Token, TokenAccount, Transfer, transfer};
+use anchor_spl::token::{Token, TokenAccount, Transfer, transfer};
 use crate::{Vault, error::ErrorCode, constants::PRECISION};
+use crate::states::vault::FEE_BPS_DENOMINATOR;
 
 #[derive(Accounts)]
 pub struct DepositRevenue<'info> {
@@ -24,6 +25,14 @@ pub struct DepositRevenue<'info> {
     )]
     pub revenue_vault: Account<'info, TokenAccount>,
 
+    /// Treasury account that receives performance fees
+    #[account(
+        mut,
+        constraint = treasury.key() == vault.treasury @ ErrorCode::InvalidTreasury,
+        constraint = treasury.owner == vault_signer.key() @ ErrorCode::InvalidTreasury
+    )]
+    pub treasury: Account<'info, TokenAccount>,
+
     /// CHECK: PDA Signer for payment vault check
     #[account(
         seeds = [b"vault_signer", vault.key().as_ref()],
@@ -40,23 +49,72 @@ pub fn process_deposit_revenue(ctx: Context<DepositRevenue>, amount: u64) -> Res
     require!(vault.minted_shares > 0, ErrorCode::NoSharesMinted);
     require!(amount > 0, ErrorCode::InvalidRevenueAmount);
 
-    // Transfer tokens into revenue_vault
-    let cpi_accounts = Transfer {
-        from: ctx.accounts.payer_ata.to_account_info(),
-        to: ctx.accounts.revenue_vault.to_account_info(),
-        authority: ctx.accounts.payer.to_account_info(),
-    };
-    let cpi_program = ctx.accounts.token_program.to_account_info();
-    transfer(CpiContext::new(cpi_program, cpi_accounts), amount)?;
+    // ============================================================
+    // PERFORMANCE FEE CALCULATION
+    // ============================================================
+    // Formula: performance_fee = revenue * fee_bps / 10_000
+    //          distributable_amount = revenue - performance_fee
+    // ============================================================
+    
+    let performance_fee = (amount as u128)
+        .checked_mul(vault.performance_fee_bps as u128)
+        .ok_or(ErrorCode::Overflow)?
+        .checked_div(FEE_BPS_DENOMINATOR as u128)
+        .ok_or(ErrorCode::MathOverflow)? as u64;
+
+    let distributable_amount = amount
+        .checked_sub(performance_fee)
+        .ok_or(ErrorCode::Underflow)?;
+
+    // ============================================================
+    // TRANSFER PERFORMANCE FEE TO TREASURY (if fee > 0)
+    // ============================================================
+    if performance_fee > 0 {
+        let cpi_accounts_treasury = Transfer {
+            from: ctx.accounts.payer_ata.to_account_info(),
+            to: ctx.accounts.treasury.to_account_info(),
+            authority: ctx.accounts.payer.to_account_info(),
+        };
+        let cpi_program_treasury = ctx.accounts.token_program.to_account_info();
+        transfer(CpiContext::new(cpi_program_treasury, cpi_accounts_treasury), performance_fee)?;
+
+        // Update total fees collected (for Protocol Revenue Invariant)
+        vault.total_fees_collected = vault.total_fees_collected
+            .checked_add(performance_fee)
+            .ok_or(ErrorCode::Overflow)?;
+    }
+
+    // ============================================================
+    // TRANSFER DISTRIBUTABLE AMOUNT TO REVENUE VAULT
+    // ============================================================
+    if distributable_amount > 0 {
+        let cpi_accounts = Transfer {
+            from: ctx.accounts.payer_ata.to_account_info(),
+            to: ctx.accounts.revenue_vault.to_account_info(),
+            authority: ctx.accounts.payer.to_account_info(),
+        };
+        let cpi_program = ctx.accounts.token_program.to_account_info();
+        transfer(CpiContext::new(cpi_program, cpi_accounts), distributable_amount)?;
+    }
+
+    // ============================================================
+    // REWARD DISTRIBUTION MATH (UNCHANGED)
+    // Uses distributable_amount ONLY for accumulator update
+    // ============================================================
+
+    // Skip accumulator update if no distributable amount
+    if distributable_amount == 0 {
+        return Ok(());
+    }
 
     // Multiplication safety bound
     require!(
-        (amount as u128) <= u128::MAX / PRECISION,
+        (distributable_amount as u128) <= u128::MAX / PRECISION,
         ErrorCode::Overflow
     );
 
-    // Compute scaled reward and remainder
-    let scaled = (amount as u128)
+    // Compute scaled reward and remainder using DISTRIBUTABLE_AMOUNT only
+    let scaled = (distributable_amount as u128)
         .checked_mul(PRECISION)
         .ok_or(ErrorCode::Overflow)?;
 
