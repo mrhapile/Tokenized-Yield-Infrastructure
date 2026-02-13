@@ -185,4 +185,93 @@ describe("Tokenized Yield Lifecycle", () => {
 
     await expect(tx.rpc()).rejects.toThrow("InvalidShareAmount");
   });
+  it("mints large amount of shares (u64 check)", async () => {
+    // Mint enough payment tokens to buy > u32 max shares
+    await mintTo(
+      provider.connection,
+      (payer as anchor.Wallet).payer,
+      paymentMint,
+      buyerPaymentAta,
+      vaultOwnerPubKey,
+      500_000_000_000
+    );
+
+    const amount = new anchor.BN(4_500_000_000); // > 2^32
+
+    const [shareholderPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("shareholder"), vaultPda.toBuffer(), buyer.publicKey.toBuffer()],
+      program.programId
+    );
+    const investorShareAta = await anchor.utils.token.associatedAddress({
+      mint: vaultShareMintPda,
+      owner: buyer.publicKey
+    });
+
+    await program.methods
+      .mintShares(amount)
+      .accounts({
+        vault: vaultPda,
+        vaultSigner: vaultSignerPda,
+        payer: buyer.publicKey,
+        payerAta: buyerPaymentAta,
+        paymentVault: paymentVaultPda,
+        vaultShareMint: vaultShareMintPda,
+        shareholder: shareholderPda,
+        investorShareAta: investorShareAta,
+        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([buyer])
+      .rpc();
+
+    const shareholder = await program.account.userStake.fetch(shareholderPda);
+    // Previous 500 + 4,500,000,000 = 4,500,000,500
+    expect(shareholder.quantity.toString()).toBe("4500000500");
+  });
+
+  it("fails with invalid payment mint", async () => {
+    const fakeMint = await createMint(
+      provider.connection,
+      (payer as anchor.Wallet).payer,
+      vaultOwnerPubKey,
+      null,
+      6
+    );
+    const fakeAta = await createAccount(
+      provider.connection,
+      (payer as anchor.Wallet).payer,
+      fakeMint,
+      buyer.publicKey
+    );
+
+    const [shareholderPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("shareholder"), vaultPda.toBuffer(), buyer.publicKey.toBuffer()],
+      program.programId
+    );
+    const investorShareAta = await anchor.utils.token.associatedAddress({
+      mint: vaultShareMintPda,
+      owner: buyer.publicKey
+    });
+
+    const tx = program.methods
+      .mintShares(new anchor.BN(10))
+      .accounts({
+        vault: vaultPda,
+        vaultSigner: vaultSignerPda,
+        payer: buyer.publicKey,
+        payerAta: fakeAta,
+        paymentVault: paymentVaultPda,
+        vaultShareMint: vaultShareMintPda,
+        shareholder: shareholderPda,
+        investorShareAta: investorShareAta,
+        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([buyer]);
+
+    // Should fail due to constraint
+    await expect(tx.rpc()).rejects.toThrow();
+  });
 });

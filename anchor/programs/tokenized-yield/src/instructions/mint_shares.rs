@@ -23,10 +23,17 @@ pub struct MintShares<'info> {
     pub payer: Signer<'info>,
 
     // we deduct money from here.
-    #[account(mut)]
+    #[account(
+        mut,
+        constraint = payer_ata.mint == vault.payment_mint @ ErrorCode::InvalidPaymentMint,
+        constraint = payer_ata.owner == payer.key() @ ErrorCode::InvalidTokenAccountOwner
+    )]
     pub payer_ata: Account<'info, TokenAccount>,
 
-    #[account(mut)]
+    #[account(
+        mut,
+        constraint = payment_vault.mint == vault.payment_mint @ ErrorCode::InvalidPaymentMint
+    )]
     pub payment_vault: Account<'info, TokenAccount>,
 
     #[account(
@@ -113,7 +120,7 @@ pub fn process_mint_shares(ctx: Context<MintShares>, amount: u64) -> Result<()> 
         shareholder.is_initialized = true;
         shareholder.owner = *ctx.accounts.payer.key;
         shareholder.vault = vault.key();
-        shareholder.quantity = 0u32;
+        shareholder.quantity = 0u64;
         shareholder.debt_claimed = 0u128;
         shareholder.bump = ctx.bumps.shareholder;
     }
@@ -121,7 +128,7 @@ pub fn process_mint_shares(ctx: Context<MintShares>, amount: u64) -> Result<()> 
     let new_quantity = (shareholder.quantity as u128)
         .checked_add(amount as u128)
         .ok_or(ErrorCode::Overflow)?;
-    shareholder.quantity = new_quantity as u32;
+    shareholder.quantity = new_quantity as u64;
     shareholder.debt_claimed = 0;
     Ok(())
 }

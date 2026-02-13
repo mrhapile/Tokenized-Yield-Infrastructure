@@ -19,4 +19,10 @@ pub enum ErrorCode {
 
     #[msg("Share amount must be greater than zero")]
     InvalidShareAmount,
+
+    #[msg("Invalid Payment Mint")]
+    InvalidPaymentMint,
+
+    #[msg("Invalid Token Account Owner")]
+    InvalidTokenAccountOwner,
 }
