@@ -89,6 +89,7 @@ pub fn process_initialize_vault(
     vault.price_per_share = price_per_share;
 
     vault.acc_reward_per_share = 0;
+    vault.reward_remainder = 0;
     vault.bump = ctx.bumps.vault;
     vault.signer_bump = ctx.bumps.vault_signer;
 

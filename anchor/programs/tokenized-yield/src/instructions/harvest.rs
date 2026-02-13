@@ -63,6 +63,15 @@ pub fn process_harvest(ctx: Context<Harvest>) -> Result<()> {
     if pending > 0 {
         let pending_u64 = u64::try_from(pending).map_err(|_| ErrorCode::Overflow)?;
 
+        // Solvency check
+        require!(
+            payment_vault.amount >= pending_u64,
+            ErrorCode::InsufficientVaultBalance
+        );
+
+        // Update reward debt BEFORE transfer (CEI pattern)
+        shareholder.reward_debt = accumulated;
+
         // Transfer pending to user
         let vault_key = vault.key();
         let seeds = &[b"vault_signer".as_ref(), vault_key.as_ref(), &[vault.signer_bump]];
@@ -75,10 +84,10 @@ pub fn process_harvest(ctx: Context<Harvest>) -> Result<()> {
         };
         let cpi_ctx = CpiContext::new_with_signer(token_program.to_account_info(), cpi_accounts, signer);
         token::transfer(cpi_ctx, pending_u64)?;
+    } else {
+        // Even if 0 pending, update debt to current accumulator
+        shareholder.reward_debt = accumulated;
     }
-
-    // Update reward debt
-    shareholder.reward_debt = accumulated;
 
     Ok(())
 }

@@ -40,4 +40,10 @@ pub enum ErrorCode {
 
     #[msg("Arithmetic underflow")]
     Underflow,
+
+    #[msg("Insufficient vault balance for reward")]
+    InsufficientVaultBalance,
+
+    #[msg("Insufficient shares for redemption")]
+    InsufficientShares,
 }

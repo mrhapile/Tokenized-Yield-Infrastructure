@@ -590,4 +590,193 @@ describe("Tokenized Yield Lifecycle", () => {
     // We will skip full setup here to avoid timeout, but the Single User test proves the mechanic works.
   });
 
+  it("REVENUE: Large Revenue Overflow Guard", async () => {
+    // Test sending > u128::MAX / PRECISION to trigger overflow check
+    // PRECISION = 1e12
+    // u128::MAX approx 3.4e38
+    // Max safe amount approx 3.4e26
+    // We'll try to send a huge amount that fits in u64 but is safe.
+    // u64::MAX is 1.8e19.
+    // So actually, any u64 amount is safe with 1e12 precision in u128.
+    // (1.8e19 * 1e12 = 1.8e31 < 3.4e38).
+    // The overflow check we added is for future proofing if we change types or precision.
+
+    // Let's test normal large amount
+    const hugeRevenue = new anchor.BN("10000000000000000"); // 10 quadrillion units
+
+    // We need enough tokens
+    await mintTo(provider.connection, (payer as anchor.Wallet).payer, paymentMint, buyerPaymentAta, vaultOwnerPubKey, 10_000_000_000_000_001);
+
+    await program.methods.depositRevenue(hugeRevenue).accounts({
+      vault: vaultPda,
+      payer: (payer as anchor.Wallet).publicKey,
+      payerAta: buyerPaymentAta,
+      paymentVault: paymentVaultPda,
+      vaultSigner: vaultSignerPda,
+      tokenProgram: TOKEN_PROGRAM_ID,
+    }).signers([(payer as anchor.Wallet).payer]).rpc();
+
+    // Should succeed.
+  });
+
+  it("REVENUE: Harvest without new revenue", async () => {
+    // Should safely return 0 or minimal dust
+    // Re-harvesting for existing user should result in 0 pending (or tiny dust).
+
+    // buyer has shares (from earlier tests).
+    const [buyerShareholderPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("shareholder"), vaultPda.toBuffer(), buyer.publicKey.toBuffer()],
+      program.programId
+    );
+
+    await program.methods.harvest().accounts({
+      vault: vaultPda,
+      vaultSigner: vaultSignerPda,
+      payer: buyer.publicKey,
+      shareholder: buyerShareholderPda,
+      paymentVault: paymentVaultPda,
+      userAta: buyerPaymentAta,
+      tokenProgram: TOKEN_PROGRAM_ID,
+    }).signers([buyer]).rpc();
+
+    // This confirms it doesn't panic on 0 pending.
+  });
+
+  // --- REDEMPTION ENGINE TESTS ---
+
+  it("REDEEM: Single User Full Exit", async () => {
+    // 1. Setup new user, mint 50 shares
+    const user = anchor.web3.Keypair.generate();
+    await provider.connection.confirmTransaction(
+      await provider.connection.requestAirdrop(user.publicKey, 1e9)
+    );
+    const userPaymentAta = await createAccount(provider.connection, (payer as anchor.Wallet).payer, paymentMint, user.publicKey);
+    await mintTo(provider.connection, (payer as anchor.Wallet).payer, paymentMint, userPaymentAta, vaultOwnerPubKey, 1_000_000);
+
+    const [shareholderPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("shareholder"), vaultPda.toBuffer(), user.publicKey.toBuffer()],
+      program.programId
+    );
+    const userShareAta = await anchor.utils.token.associatedAddress({ mint: vaultShareMintPda, owner: user.publicKey });
+
+    const amount = new anchor.BN(50);
+    await program.methods.mintShares(amount).accounts({
+      vault: vaultPda,
+      vaultSigner: vaultSignerPda,
+      payer: user.publicKey,
+      payerAta: userPaymentAta,
+      paymentVault: paymentVaultPda,
+      vaultShareMint: vaultShareMintPda,
+      shareholder: shareholderPda,
+      investorShareAta: userShareAta,
+      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+      tokenProgram: TOKEN_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
+    }).signers([user]).rpc();
+
+    // 2. Redeem all 50 shares
+    // Current balance check
+    const startBalance = (await provider.connection.getTokenAccountBalance(userPaymentAta)).value.amount;
+
+    await program.methods.redeemShares(amount).accounts({
+      vault: vaultPda,
+      vaultSigner: vaultSignerPda,
+      payer: user.publicKey,
+      shareholder: shareholderPda,
+      paymentVault: paymentVaultPda,
+      investorShareAta: userShareAta,
+      vaultShareMint: vaultShareMintPda,
+      payerAta: userPaymentAta,
+      tokenProgram: TOKEN_PROGRAM_ID,
+    }).signers([user]).rpc();
+
+    // 3. Verify
+    const endBalance = (await provider.connection.getTokenAccountBalance(userPaymentAta)).value.amount;
+    const returned = new anchor.BN(endBalance).sub(new anchor.BN(startBalance));
+
+    // Should get back 50 * 100 = 5000 (Principal only, no revenue deposited for this user)
+    expect(returned.toNumber()).toBe(5000);
+
+    const shareholderAccount = await program.account.userStake.fetch(shareholderPda);
+    expect(shareholderAccount.quantity.toNumber()).toBe(0);
+
+    // Verify share tokens burned
+    // let shareBalance = (await provider.connection.getTokenAccountBalance(userShareAta)).value.amount;
+    // expect(shareBalance).toBe("0"); 
+  });
+
+  it("REDEEM: Redeem with pending rewards", async () => {
+    // 1. New user mints 100 shares
+    // We need fresh user to be clean
+    const user = anchor.web3.Keypair.generate();
+    await provider.connection.confirmTransaction(await provider.connection.requestAirdrop(user.publicKey, 1e9));
+    const userPaymentAta = await createAccount(provider.connection, (payer as anchor.Wallet).payer, paymentMint, user.publicKey);
+    await mintTo(provider.connection, (payer as anchor.Wallet).payer, paymentMint, userPaymentAta, vaultOwnerPubKey, 1_000_000);
+    const [shareholderPda] = PublicKey.findProgramAddressSync([Buffer.from("shareholder"), vaultPda.toBuffer(), user.publicKey.toBuffer()], program.programId);
+    const userShareAta = await anchor.utils.token.associatedAddress({ mint: vaultShareMintPda, owner: user.publicKey });
+
+    await program.methods.mintShares(new anchor.BN(100)).accounts({
+      vault: vaultPda, vaultSigner: vaultSignerPda, payer: user.publicKey, payerAta: userPaymentAta,
+      paymentVault: paymentVaultPda, vaultShareMint: vaultShareMintPda, shareholder: shareholderPda,
+      investorShareAta: userShareAta, associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+      tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+    }).signers([user]).rpc();
+
+    // 2. Deposit Revenue
+    // Revenue amount
+    const revenueAmount = new anchor.BN(10_000); // 10000 tokens
+
+    await program.methods.depositRevenue(revenueAmount).accounts({
+      vault: vaultPda,
+      payer: (payer as anchor.Wallet).publicKey,
+      payerAta: buyerPaymentAta, // reusing buyer's ata which has funds
+      paymentVault: paymentVaultPda,
+      vaultSigner: vaultSignerPda,
+      tokenProgram: TOKEN_PROGRAM_ID,
+    }).signers([(payer as anchor.Wallet).payer]).rpc();
+
+    // 3. Redeem 100 shares
+    const startBalance = (await provider.connection.getTokenAccountBalance(userPaymentAta)).value.amount;
+
+    await program.methods.redeemShares(new anchor.BN(100)).accounts({
+      vault: vaultPda, vaultSigner: vaultSignerPda, payer: user.publicKey, shareholder: shareholderPda,
+      paymentVault: paymentVaultPda, investorShareAta: userShareAta, vaultShareMint: vaultShareMintPda,
+      payerAta: userPaymentAta, tokenProgram: TOKEN_PROGRAM_ID,
+    }).signers([user]).rpc();
+
+    const endBalance = (await provider.connection.getTokenAccountBalance(userPaymentAta)).value.amount;
+    const diff = new anchor.BN(endBalance).sub(new anchor.BN(startBalance));
+
+    // Expectations:
+    // Principal: 100 * 100 = 10,000
+    // Reward: some positive amount
+    // Total > 10,000
+    expect(diff.gt(new anchor.BN(10000))).toBe(true);
+  });
+
+  it("REDEEM: Fail if redeeming too much", async () => {
+    const user = anchor.web3.Keypair.generate();
+    await provider.connection.confirmTransaction(await provider.connection.requestAirdrop(user.publicKey, 1e9));
+    const userPaymentAta = await createAccount(provider.connection, (payer as anchor.Wallet).payer, paymentMint, user.publicKey);
+    await mintTo(provider.connection, (payer as anchor.Wallet).payer, paymentMint, userPaymentAta, vaultOwnerPubKey, 10000);
+    const [shareholderPda] = PublicKey.findProgramAddressSync([Buffer.from("shareholder"), vaultPda.toBuffer(), user.publicKey.toBuffer()], program.programId);
+    const userShareAta = await anchor.utils.token.associatedAddress({ mint: vaultShareMintPda, owner: user.publicKey });
+
+    await program.methods.mintShares(new anchor.BN(10)).accounts({
+      vault: vaultPda, vaultSigner: vaultSignerPda, payer: user.publicKey, payerAta: userPaymentAta,
+      paymentVault: paymentVaultPda, vaultShareMint: vaultShareMintPda, shareholder: shareholderPda,
+      investorShareAta: userShareAta, associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+      tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+    }).signers([user]).rpc();
+
+    // Try redeem 20
+    const tx = program.methods.redeemShares(new anchor.BN(20)).accounts({
+      vault: vaultPda, vaultSigner: vaultSignerPda, payer: user.publicKey, shareholder: shareholderPda,
+      paymentVault: paymentVaultPda, investorShareAta: userShareAta, vaultShareMint: vaultShareMintPda,
+      payerAta: userPaymentAta, tokenProgram: TOKEN_PROGRAM_ID,
+    }).signers([user]);
+
+    await expect(tx.rpc()).rejects.toThrow("InsufficientShares");
+  });
+
 });

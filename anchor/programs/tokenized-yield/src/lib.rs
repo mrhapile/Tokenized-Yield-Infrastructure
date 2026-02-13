@@ -34,4 +34,8 @@ pub mod tokenized_yield_infrastructure {
     pub fn harvest(ctx: Context<Harvest>) -> Result<()> {
         instructions::process_harvest(ctx)
     }
+
+    pub fn redeem_shares(ctx: Context<RedeemShares>, amount: u64) -> Result<()> {
+        instructions::process_redeem_shares(ctx, amount)
+    }
 }

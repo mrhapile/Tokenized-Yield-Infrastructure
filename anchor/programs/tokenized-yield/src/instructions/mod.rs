@@ -9,3 +9,6 @@ pub use deposit_revenue::*;
 
 pub mod harvest;
 pub use harvest::*;
+
+pub mod redeem_shares;
+pub use redeem_shares::*;

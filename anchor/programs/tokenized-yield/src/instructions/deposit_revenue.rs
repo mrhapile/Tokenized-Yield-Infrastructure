@@ -49,19 +49,60 @@ pub fn process_deposit_revenue(ctx: Context<DepositRevenue>, amount: u64) -> Res
     let cpi_program = ctx.accounts.token_program.to_account_info();
     transfer(CpiContext::new(cpi_program, cpi_accounts), amount)?;
 
-    // Compute scaled reward
+    // Multiplication safety bound
+    require!(
+        (amount as u128) <= u128::MAX / PRECISION,
+        ErrorCode::Overflow
+    );
+
+    // Compute scaled reward and remainder
     let scaled = (amount as u128)
         .checked_mul(PRECISION)
         .ok_or(ErrorCode::Overflow)?;
 
+    let minted_shares_u128 = vault.minted_shares as u128;
     let reward_increment = scaled
-        .checked_div(vault.minted_shares as u128)
+        .checked_div(minted_shares_u128)
+        .ok_or(ErrorCode::MathOverflow)?;
+    
+    let remainder = scaled
+        .checked_rem(minted_shares_u128)
         .ok_or(ErrorCode::MathOverflow)?;
 
-    vault.acc_reward_per_share = vault
+    // Update accumulator with overflow guard
+    let new_acc = vault
         .acc_reward_per_share
         .checked_add(reward_increment)
         .ok_or(ErrorCode::Overflow)?;
+    
+    // Explicit ceiling guard (monotonicity check mostly, but also wraps)
+    require!(
+        new_acc >= vault.acc_reward_per_share,
+        ErrorCode::Overflow
+    );
+    vault.acc_reward_per_share = new_acc;
+
+    // Track remainder and distribute if enough accumulates
+    let new_remainder = vault.reward_remainder
+        .checked_add(remainder)
+        .ok_or(ErrorCode::Overflow)?;
+    
+    if new_remainder >= minted_shares_u128 {
+        let remainder_increment = new_remainder
+            .checked_div(minted_shares_u128)
+            .ok_or(ErrorCode::MathOverflow)?;
+        
+        let new_acc_rem = vault.acc_reward_per_share
+             .checked_add(remainder_increment)
+             .ok_or(ErrorCode::Overflow)?;
+        
+        vault.acc_reward_per_share = new_acc_rem;
+        vault.reward_remainder = new_remainder
+            .checked_rem(minted_shares_u128)
+            .ok_or(ErrorCode::MathOverflow)?;
+    } else {
+        vault.reward_remainder = new_remainder;
+    }
 
     Ok(())
 }

@@ -93,6 +93,7 @@ Rewards are distributed strictly proportional to the number of shares held at th
 - Global `acc_reward_per_share` accumulates rewards per unit of share.
 - Individual user pending calculation `quantity * acc_reward_per_share` ensures proportionality.
 
+
 ## 10. Precision Stability Invariant
 
 Calculations use sufficient precision to minimize dust loss, but safe arithmetic prevents overflow.
@@ -100,4 +101,57 @@ Calculations use sufficient precision to minimize dust loss, but safe arithmetic
 **Enforcement:**
 - `PRECISION` constant (1e12) used for `acc_reward_per_share` scaling.
 - Usage of `u128` for intermediate calculations.
+
+### Maximum Accumulator Growth Bound
+
+The accumulator `acc_reward_per_share` grows monotonically. To prevent `u128` overflow:
+$$
+\text{Max Revenue} \approx \frac{u128::MAX}{\text{PRECISION}} \approx 3.4 \times 10^{26}
+$$
+Given reasonable token supplies (e.g., $10^9$), the accumulator will not overflow for eons. Explicit checks enforce this.
+
+### Rounding Stability Guarantee & Remainder Conservation
+
+Integer division introduces truncation errors (dust). To conserve these value leaks:
+
+$$
+\text{Remainder} = (\text{Amount} \times \text{PRECISION}) \pmod{\text{Minted Shares}}
+$$
+
+The protocol tracks `reward_remainder`. Once `reward_remainder >= minted_shares`, an additional unit is added to `acc_reward_per_share`.
+
+$$
+\text{Total Distributed} + \text{Remaining in Remainder} = \text{Total Revenue Exact}
+$$
+
+
+## 11. Redemption Conservation Invariant
+
+When shares are redeemed, the total number of shares decreases exactly by the redeemed amount, and the user receives principal + pending rewards.
+
+$$
+\text{Vault.minted\_shares}_{new} = \text{Vault.minted\_shares}_{old} - \text{Amount}
+$$
+
+**Enforcement:**
+- Atomic decrement of `vault.minted_shares` and `shareholder.quantity`.
+- Checked subtraction prevents underflow.
+
+## 12. No Phantom Share Invariant
+
+A user cannot redeem more shares than they possess.
+
+**Enforcement:**
+- Explicit `require!(shareholder.quantity >= amount)`.
+- Checked subtraction on `shareholder.quantity`.
+- Token burn ensures on-chain SPL token supply matches program state.
+
+## 13. Exit Fairness Invariant
+
+A user redeeming shares must receive all pending rewards accrued up to the moment of redemption before their share balance is reduced.
+
+**Enforcement:**
+- `redeem_shares` calls the reward sync logic (identical to `harvest`) *before* modifying `quantity`.
+- `reward_debt` is re-calculated based on the *new* lower quantity after redemption.
+
 
