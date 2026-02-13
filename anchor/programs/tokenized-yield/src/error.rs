@@ -28,4 +28,16 @@ pub enum ErrorCode {
 
     #[msg("Invalid Payment Vault")]
     InvalidPaymentVault,
+
+    #[msg("No shares minted")]
+    NoSharesMinted,
+
+    #[msg("Invalid revenue amount")]
+    InvalidRevenueAmount,
+
+    #[msg("Invalid shareholder account")]
+    InvalidShareholder,
+
+    #[msg("Arithmetic underflow")]
+    Underflow,
 }

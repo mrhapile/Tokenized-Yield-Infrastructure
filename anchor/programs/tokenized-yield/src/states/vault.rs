@@ -18,7 +18,7 @@ pub struct Vault {
     pub minted_shares: u64,
     pub price_per_share: u64,
 
-    pub account_revenue_per_share: u128,
+    pub acc_reward_per_share: u128,
 
     pub bump: u8,
     pub signer_bump: u8,

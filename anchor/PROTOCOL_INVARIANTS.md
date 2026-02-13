@@ -63,3 +63,41 @@ State mutations must occur in a deterministic order to prevent reentrancy side-e
 1. Checks and calculations.
 2. CPI interactions (Payment Transfer).
 3. State mutations (Vault update, UserStake update).
+
+## 7. Reward Conservation Invariant
+
+The total rewards distributed to users plus the rewards remaining in the vault must equal the total revenue deposited into the payment vault (minus claimed rewards).
+
+$$
+\text{Total Deposited} = \sum \text{Claimed Rewards} + \text{Pending Rewards}
+$$
+
+**Enforcement:**
+- `deposit_revenue` increases `acc_reward_per_share` based on `amount / total_shares`.
+- `mint_shares` and `harvest` calculate pending rewards based on `acc_reward_per_share` delta.
+- Checked arithmetic prevents loss of precision leaks (except unavoidable rounding).
+
+## 8. No Double Claim Invariant
+
+A user cannot claim the same reward twice.
+
+**Enforcement:**
+- `reward_debt` is updated atomically whenever `quantity` changes or `harvest` is called.
+- `reward_debt` acts as a checkpoint: `pending = (quantity * acc_reward_per_share) - reward_debt`.
+
+## 9. Proportional Distribution Invariant
+
+Rewards are distributed strictly proportional to the number of shares held at the time of revenue deposit.
+
+**Enforcement:**
+- Global `acc_reward_per_share` accumulates rewards per unit of share.
+- Individual user pending calculation `quantity * acc_reward_per_share` ensures proportionality.
+
+## 10. Precision Stability Invariant
+
+Calculations use sufficient precision to minimize dust loss, but safe arithmetic prevents overflow.
+
+**Enforcement:**
+- `PRECISION` constant (1e12) used for `acc_reward_per_share` scaling.
+- Usage of `u128` for intermediate calculations.
+

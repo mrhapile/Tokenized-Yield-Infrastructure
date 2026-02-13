@@ -10,6 +10,8 @@ pub use states::*;
 
 pub mod error;
 
+pub mod constants;
+
 #[program]
 pub mod tokenized_yield_infrastructure {
     use super::*;
@@ -23,5 +25,13 @@ pub mod tokenized_yield_infrastructure {
     }
     pub fn mint_shares(ctx: Context<MintShares>, amount: u64) -> Result<()> {
         instructions::process_mint_shares(ctx, amount)
+    }
+
+    pub fn deposit_revenue(ctx: Context<DepositRevenue>, amount: u64) -> Result<()> {
+        instructions::process_deposit_revenue(ctx, amount)
+    }
+
+    pub fn harvest(ctx: Context<Harvest>) -> Result<()> {
+        instructions::process_harvest(ctx)
     }
 }

@@ -94,9 +94,24 @@ pub fn process_mint_shares(ctx: Context<MintShares>, amount: u64) -> Result<()> 
         shareholder.owner = *ctx.accounts.payer.key;
         shareholder.vault = vault.key();
         shareholder.quantity = 0u64;
-        shareholder.debt_claimed = 0u128;
+        shareholder.reward_debt = 0u128;
         shareholder.bump = ctx.bumps.shareholder;
     }
+
+    // Compute pending reward for existing shares (if any)
+    let pending = if shareholder.quantity > 0 {
+        let accumulated = (shareholder.quantity as u128)
+            .checked_mul(vault.acc_reward_per_share)
+            .ok_or(ErrorCode::Overflow)?
+            .checked_div(crate::constants::PRECISION)
+            .ok_or(ErrorCode::MathOverflow)?;
+
+        accumulated
+            .checked_sub(shareholder.reward_debt)
+            .ok_or(ErrorCode::Underflow)?
+    } else {
+        0
+    };
 
     let new_quantity = shareholder.quantity
         .checked_add(amount)
@@ -105,9 +120,36 @@ pub fn process_mint_shares(ctx: Context<MintShares>, amount: u64) -> Result<()> 
     // 3. Mutate State (Effects)
     vault.minted_shares = new_minted;
     shareholder.quantity = new_quantity;
-    shareholder.debt_claimed = 0;
+    
+    // Update reward debt based on new quantity
+    shareholder.reward_debt = (shareholder.quantity as u128)
+        .checked_mul(vault.acc_reward_per_share)
+        .ok_or(ErrorCode::Overflow)?
+        .checked_div(crate::constants::PRECISION)
+        .ok_or(ErrorCode::MathOverflow)?;
 
     // 4. Perform CPIs (Interactions)
+    
+    // Transfer pending rewards if any
+    if pending > 0 {
+        let pending_u64 = u64::try_from(pending).map_err(|_| ErrorCode::Overflow)?;
+        
+        let vault_key = vault.key();
+        let seeds = &[b"vault_signer".as_ref(), vault_key.as_ref(), &[vault.signer_bump]];
+        let signer = &[&seeds[..]];
+
+        // We transfer form payment_vault to payer_ata (user's wallet)
+        // Reusing accounts already passed. 
+        // payment_vault is source (owned by vault_signer)
+        // payer_ata is dest (owned by payer)
+        let cpi_accounts_reward = Transfer {
+            from: ctx.accounts.payment_vault.to_account_info(),
+            to: ctx.accounts.payer_ata.to_account_info(),
+            authority: ctx.accounts.vault_signer.to_account_info(),
+        };
+        let cpi_program_token = ctx.accounts.token_program.to_account_info();
+        transfer(CpiContext::new_with_signer(cpi_program_token, cpi_accounts_reward, signer), pending_u64)?;
+    }
     
     // Transfer payment to vault
     let cpi_accounts_transfer = Transfer {

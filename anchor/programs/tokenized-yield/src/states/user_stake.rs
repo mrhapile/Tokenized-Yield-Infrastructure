@@ -8,6 +8,6 @@ pub struct UserStake {
     pub vault: Pubkey,
     pub quantity: u64,
 
-    pub debt_claimed: u128,
+    pub reward_debt: u128,
     pub bump: u8,
 }
